@@ -1,0 +1,39 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap' version '1.15.5'
+}
+
+base {
+    archivesName = mod_id
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.officialMojangMappings()
+
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+
+    implementation project(':common')
+}
+
+def generateFabricModMetadata = tasks.register("generateFabricModMetadata", ProcessResources) {
+    def replaceProperties = [
+            minecraft_version: minecraft_version,
+            fabric_loader_version: fabric_loader_version,
+            fabric_api_version: fabric_api_version,
+            mod_id: mod_id,
+            mod_name: mod_name,
+            mod_license: mod_license,
+            mod_version: mod_version,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+
+sourceSets.main.resources.srcDir generateFabricModMetadata
+
+tasks.named('jar', Jar) {
+    from project(':common').sourceSets.main.output
+}

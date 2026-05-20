@@ -1,0 +1,360 @@
+package br.com.pedrodalben.easyvip.persistence;
+
+import br.com.pedrodalben.easyvip.model.*;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
+
+import java.io.IOException;
+import java.lang.reflect.Type;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+public final class PersistenceManager {
+
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "EasyVip-Persistence-Thread");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    private static final ReentrantReadWriteLock LOCK = new ReentrantReadWriteLock();
+    private static Path dataDir;
+
+    // Cache
+    private static final Map<UUID, PlayerVipRegistry> vips = new HashMap<>();
+    private static final Map<String, KeyRecord> keys = new HashMap<>();
+    private static final Map<UUID, List<PendingVariantSelection>> pendingVariants = new HashMap<>();
+    private static final List<AuditLogRecord> auditLogs = new ArrayList<>();
+
+    private PersistenceManager() {
+    }
+
+    public static void initialize(Path dir) {
+        dataDir = dir.resolve("data");
+        try {
+            Files.createDirectories(dataDir);
+        } catch (IOException e) {
+            throw new RuntimeException("Could not create data directory", e);
+        }
+        loadAll();
+    }
+
+    public static void shutdown() {
+        LOCK.writeLock().lock();
+        try {
+            saveVipsSync();
+            saveKeysSync();
+            savePendingVariantsSync();
+            saveAuditLogsSync();
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        EXECUTOR.shutdown();
+    }
+
+    // ─── Load Operations ────────────────────────────────────
+    private static void loadAll() {
+        LOCK.writeLock().lock();
+        try {
+            loadVips();
+            loadKeys();
+            loadPendingVariants();
+            loadAuditLogs();
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+    }
+
+    private static void loadVips() {
+        Path file = dataDir.resolve("vips.json");
+        Path backup = dataDir.resolve("vips.json.bak");
+        Type type = new TypeToken<Map<String, PlayerVipRegistry>>(){}.getType();
+
+        Map<String, PlayerVipRegistry> loaded = loadFile(file, backup, type);
+        vips.clear();
+        if (loaded != null) {
+            for (Map.Entry<String, PlayerVipRegistry> entry : loaded.entrySet()) {
+                try {
+                    vips.put(UUID.fromString(entry.getKey()), entry.getValue());
+                } catch (IllegalArgumentException e) {
+                    // Ignore corrupted key
+                }
+            }
+        }
+    }
+
+    private static void loadKeys() {
+        Path file = dataDir.resolve("keys.json");
+        Path backup = dataDir.resolve("keys.json.bak");
+        Type type = new TypeToken<Map<String, KeyRecord>>(){}.getType();
+
+        Map<String, KeyRecord> loaded = loadFile(file, backup, type);
+        keys.clear();
+        if (loaded != null) {
+            keys.putAll(loaded);
+        }
+    }
+
+    private static void loadPendingVariants() {
+        Path file = dataDir.resolve("pending_variants.json");
+        Path backup = dataDir.resolve("pending_variants.json.bak");
+        Type type = new TypeToken<Map<String, List<PendingVariantSelection>>>(){}.getType();
+
+        Map<String, List<PendingVariantSelection>> loaded = loadFile(file, backup, type);
+        pendingVariants.clear();
+        if (loaded != null) {
+            for (Map.Entry<String, List<PendingVariantSelection>> entry : loaded.entrySet()) {
+                try {
+                    pendingVariants.put(UUID.fromString(entry.getKey()), entry.getValue());
+                } catch (IllegalArgumentException e) {
+                    // Ignore
+                }
+            }
+        }
+    }
+
+    private static void loadAuditLogs() {
+        Path file = dataDir.resolve("audit_logs.json");
+        Path backup = dataDir.resolve("audit_logs.json.bak");
+        Type type = new TypeToken<List<AuditLogRecord>>(){}.getType();
+
+        List<AuditLogRecord> loaded = loadFile(file, backup, type);
+        auditLogs.clear();
+        if (loaded != null) {
+            auditLogs.addAll(loaded);
+        }
+    }
+
+    private static <T> T loadFile(Path file, Path backup, Type type) {
+        if (Files.exists(file)) {
+            try {
+                String content = Files.readString(file);
+                return GSON.fromJson(content, type);
+            } catch (Exception e) {
+                System.err.println("[EasyVip] Error loading " + file.getFileName() + ", trying backup: " + e.getMessage());
+                if (Files.exists(backup)) {
+                    try {
+                        String content = Files.readString(backup);
+                        return GSON.fromJson(content, type);
+                    } catch (Exception ex) {
+                        System.err.println("[EasyVip] Backup also corrupt for " + file.getFileName() + ": " + ex.getMessage());
+                    }
+                }
+            }
+        } else if (Files.exists(backup)) {
+            try {
+                String content = Files.readString(backup);
+                return GSON.fromJson(content, type);
+            } catch (Exception e) {
+                System.err.println("[EasyVip] Error loading backup for " + file.getFileName() + ": " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    // ─── Save Trigger Helpers (Async) ───────────────────────
+    public static void saveVips() {
+        EXECUTOR.submit(PersistenceManager::saveVipsSync);
+    }
+
+    public static void saveKeys() {
+        EXECUTOR.submit(PersistenceManager::saveKeysSync);
+    }
+
+    public static void savePendingVariants() {
+        EXECUTOR.submit(PersistenceManager::savePendingVariantsSync);
+    }
+
+    public static void saveAuditLogs() {
+        EXECUTOR.submit(PersistenceManager::saveAuditLogsSync);
+    }
+
+    // ─── Sync Atomic Save Operations ────────────────────────
+    private static void saveVipsSync() {
+        LOCK.readLock().lock();
+        Map<String, PlayerVipRegistry> data = new HashMap<>();
+        try {
+            for (Map.Entry<UUID, PlayerVipRegistry> entry : vips.entrySet()) {
+                data.put(entry.getKey().toString(), entry.getValue());
+            }
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        saveAtomic(dataDir.resolve("vips.json"), dataDir.resolve("vips.json.bak"), data);
+    }
+
+    private static void saveKeysSync() {
+        LOCK.readLock().lock();
+        Map<String, KeyRecord> data = new HashMap<>();
+        try {
+            data.putAll(keys);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        saveAtomic(dataDir.resolve("keys.json"), dataDir.resolve("keys.json.bak"), data);
+    }
+
+    private static void savePendingVariantsSync() {
+        LOCK.readLock().lock();
+        Map<String, List<PendingVariantSelection>> data = new HashMap<>();
+        try {
+            for (Map.Entry<UUID, List<PendingVariantSelection>> entry : pendingVariants.entrySet()) {
+                data.put(entry.getKey().toString(), entry.getValue());
+            }
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        saveAtomic(dataDir.resolve("pending_variants.json"), dataDir.resolve("pending_variants.json.bak"), data);
+    }
+
+    private static void saveAuditLogsSync() {
+        LOCK.readLock().lock();
+        List<AuditLogRecord> data = new ArrayList<>();
+        try {
+            data.addAll(auditLogs);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        saveAtomic(dataDir.resolve("audit_logs.json"), dataDir.resolve("audit_logs.json.bak"), data);
+    }
+
+    private static void saveAtomic(Path file, Path backup, Object data) {
+        try {
+            String jsonStr = GSON.toJson(data);
+            Path tempFile = file.getParent().resolve(file.getFileName().toString() + ".tmp");
+
+            // Write to tmp
+            Files.writeString(tempFile, jsonStr);
+
+            // Create backup if target file exists
+            if (Files.exists(file)) {
+                Files.copy(file, backup, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            // Atomic move/rename
+            Files.move(tempFile, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            System.err.println("[EasyVip] Failed to save file atomically: " + file.getFileName() + ": " + e.getMessage());
+        }
+    }
+
+    // ─── API Getters & Setters ──────────────────────────────
+    public static PlayerVipRegistry getPlayerVips(UUID uuid) {
+        LOCK.readLock().lock();
+        try {
+            return vips.get(uuid);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+
+    public static void updatePlayerVips(UUID uuid, PlayerVipRegistry registry) {
+        LOCK.writeLock().lock();
+        try {
+            vips.put(uuid, registry);
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        saveVips();
+    }
+
+    public static KeyRecord getKey(String code) {
+        LOCK.readLock().lock();
+        try {
+            return keys.get(code);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+
+    public static void putKey(KeyRecord keyRecord) {
+        LOCK.writeLock().lock();
+        try {
+            keys.put(keyRecord.getCode(), keyRecord);
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        saveKeys();
+    }
+
+    public static void removeKey(String code) {
+        LOCK.writeLock().lock();
+        try {
+            keys.remove(code);
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        saveKeys();
+    }
+
+    public static List<KeyRecord> getAllKeys() {
+        LOCK.readLock().lock();
+        try {
+            return new ArrayList<>(keys.values());
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+
+    public static List<PendingVariantSelection> getPendingVariants(UUID uuid) {
+        LOCK.readLock().lock();
+        try {
+            return pendingVariants.getOrDefault(uuid, new ArrayList<>());
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+
+    public static void addPendingVariant(UUID uuid, PendingVariantSelection selection) {
+        LOCK.writeLock().lock();
+        try {
+            List<PendingVariantSelection> list = pendingVariants.computeIfAbsent(uuid, k -> new ArrayList<>());
+            list.add(selection);
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        savePendingVariants();
+    }
+
+    public static void removePendingVariant(UUID uuid, String packageId) {
+        LOCK.writeLock().lock();
+        try {
+            List<PendingVariantSelection> list = pendingVariants.get(uuid);
+            if (list != null) {
+                list.removeIf(sel -> sel.getPackageId().equals(packageId));
+                if (list.isEmpty()) {
+                    pendingVariants.remove(uuid);
+                }
+            }
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        savePendingVariants();
+    }
+
+    public static void log(String operator, String action, String details) {
+        LOCK.writeLock().lock();
+        try {
+            auditLogs.add(new AuditLogRecord(operator, action, details));
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        saveAuditLogs();
+    }
+
+    public static List<AuditLogRecord> getAuditLogs() {
+        LOCK.readLock().lock();
+        try {
+            return new ArrayList<>(auditLogs);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+}

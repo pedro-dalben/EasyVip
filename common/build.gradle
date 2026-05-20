@@ -1,0 +1,29 @@
+plugins {
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+base {
+    archivesName = "${mod_id}-common"
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+}
+
+repositories {
+    maven {
+        name = 'LuckPerms'
+        url = 'https://repo.luckperms.net/'
+    }
+}
+
+dependencies {
+    compileOnly "curse.maven:ftb-ranks-314905:6431744"
+    compileOnly "curse.maven:ftb-library-404465:7746959"
+    compileOnly "net.luckperms:api:5.4"
+}

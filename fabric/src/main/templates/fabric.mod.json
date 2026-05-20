@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "easyVip loader bridge for Fabric.",
+  "authors": [
+    "pedrodalben"
+  ],
+  "contact": {},
+  "license": "${mod_license}",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "br.com.pedrodalben.easyvip.fabric.EasyVipFabric"
+    ]
+  },
+  "depends": {
+    "minecraft": "${minecraft_version}",
+    "java": ">=21",
+    "fabricloader": ">=${fabric_loader_version}",
+    "fabric-api": "*"
+  }
+}
