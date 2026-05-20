@@ -31,6 +31,7 @@ public final class PersistenceManager {
     private static final Map<UUID, PlayerVipRegistry> vips = new HashMap<>();
     private static final Map<String, KeyRecord> keys = new HashMap<>();
     private static final Map<UUID, List<PendingVariantSelection>> pendingVariants = new HashMap<>();
+    private static final Map<UUID, Map<String, Long>> packageUsage = new HashMap<>();
     private static final List<AuditLogRecord> auditLogs = new ArrayList<>();
 
     private PersistenceManager() {
@@ -52,6 +53,7 @@ public final class PersistenceManager {
             saveVipsSync();
             saveKeysSync();
             savePendingVariantsSync();
+            savePackageUsageSync();
             saveAuditLogsSync();
         } finally {
             LOCK.writeLock().unlock();
@@ -66,6 +68,7 @@ public final class PersistenceManager {
             loadVips();
             loadKeys();
             loadPendingVariants();
+            loadPackageUsage();
             loadAuditLogs();
         } finally {
             LOCK.writeLock().unlock();
@@ -113,6 +116,24 @@ public final class PersistenceManager {
             for (Map.Entry<String, List<PendingVariantSelection>> entry : loaded.entrySet()) {
                 try {
                     pendingVariants.put(UUID.fromString(entry.getKey()), entry.getValue());
+                } catch (IllegalArgumentException e) {
+                    // Ignore
+                }
+            }
+        }
+    }
+
+    private static void loadPackageUsage() {
+        Path file = dataDir.resolve("package_usage.json");
+        Path backup = dataDir.resolve("package_usage.json.bak");
+        Type type = new TypeToken<Map<String, Map<String, Long>>>(){}.getType();
+
+        Map<String, Map<String, Long>> loaded = loadFile(file, backup, type);
+        packageUsage.clear();
+        if (loaded != null) {
+            for (Map.Entry<String, Map<String, Long>> entry : loaded.entrySet()) {
+                try {
+                    packageUsage.put(UUID.fromString(entry.getKey()), entry.getValue());
                 } catch (IllegalArgumentException e) {
                     // Ignore
                 }
@@ -172,6 +193,10 @@ public final class PersistenceManager {
         EXECUTOR.submit(PersistenceManager::savePendingVariantsSync);
     }
 
+    public static void savePackageUsage() {
+        EXECUTOR.submit(PersistenceManager::savePackageUsageSync);
+    }
+
     public static void saveAuditLogs() {
         EXECUTOR.submit(PersistenceManager::saveAuditLogsSync);
     }
@@ -214,6 +239,19 @@ public final class PersistenceManager {
         saveAtomic(dataDir.resolve("pending_variants.json"), dataDir.resolve("pending_variants.json.bak"), data);
     }
 
+    private static void savePackageUsageSync() {
+        LOCK.readLock().lock();
+        Map<String, Map<String, Long>> data = new HashMap<>();
+        try {
+            for (Map.Entry<UUID, Map<String, Long>> entry : packageUsage.entrySet()) {
+                data.put(entry.getKey().toString(), new HashMap<>(entry.getValue()));
+            }
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        saveAtomic(dataDir.resolve("package_usage.json"), dataDir.resolve("package_usage.json.bak"), data);
+    }
+
     private static void saveAuditLogsSync() {
         LOCK.readLock().lock();
         List<AuditLogRecord> data = new ArrayList<>();
@@ -250,6 +288,19 @@ public final class PersistenceManager {
         LOCK.readLock().lock();
         try {
             return vips.get(uuid);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+
+    public static Map<UUID, PlayerVipRegistry> getAllPlayerVips() {
+        LOCK.readLock().lock();
+        try {
+            Map<UUID, PlayerVipRegistry> snapshot = new HashMap<>();
+            for (Map.Entry<UUID, PlayerVipRegistry> entry : vips.entrySet()) {
+                snapshot.put(entry.getKey(), entry.getValue());
+            }
+            return snapshot;
         } finally {
             LOCK.readLock().unlock();
         }
@@ -306,7 +357,21 @@ public final class PersistenceManager {
     public static List<PendingVariantSelection> getPendingVariants(UUID uuid) {
         LOCK.readLock().lock();
         try {
-            return pendingVariants.getOrDefault(uuid, new ArrayList<>());
+            List<PendingVariantSelection> list = pendingVariants.get(uuid);
+            return list == null ? new ArrayList<>() : new ArrayList<>(list);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+
+    public static Map<UUID, List<PendingVariantSelection>> getAllPendingVariants() {
+        LOCK.readLock().lock();
+        try {
+            Map<UUID, List<PendingVariantSelection>> snapshot = new HashMap<>();
+            for (Map.Entry<UUID, List<PendingVariantSelection>> entry : pendingVariants.entrySet()) {
+                snapshot.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+            }
+            return snapshot;
         } finally {
             LOCK.readLock().unlock();
         }
@@ -337,6 +402,39 @@ public final class PersistenceManager {
             LOCK.writeLock().unlock();
         }
         savePendingVariants();
+    }
+
+    public static Map<String, Long> getPackageUsage(UUID uuid) {
+        LOCK.readLock().lock();
+        try {
+            Map<String, Long> usage = packageUsage.get(uuid);
+            return usage == null ? new HashMap<>() : new HashMap<>(usage);
+        } finally {
+            LOCK.readLock().unlock();
+        }
+    }
+
+    public static void updatePackageUsage(UUID uuid, Map<String, Long> usage) {
+        LOCK.writeLock().lock();
+        try {
+            packageUsage.put(uuid, new HashMap<>(usage));
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        savePackageUsage();
+    }
+
+    public static Map<UUID, Map<String, Long>> getAllPackageUsage() {
+        LOCK.readLock().lock();
+        try {
+            Map<UUID, Map<String, Long>> snapshot = new HashMap<>();
+            for (Map.Entry<UUID, Map<String, Long>> entry : packageUsage.entrySet()) {
+                snapshot.put(entry.getKey(), new HashMap<>(entry.getValue()));
+            }
+            return snapshot;
+        } finally {
+            LOCK.readLock().unlock();
+        }
     }
 
     public static void log(String operator, String action, String details) {

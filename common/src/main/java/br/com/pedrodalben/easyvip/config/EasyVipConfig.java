@@ -46,6 +46,10 @@ public final class EasyVipConfig {
         public List<String> allowedDimensions = new ArrayList<>();
         public List<String> denyDimensions = new ArrayList<>();
         public int autoExpireIntervalSeconds = 30;
+        public int variantSelectionTimeoutSeconds = 86400;
+        public boolean notifyPendingVariantOnLogin = true;
+        public String itemKeyItemId = "minecraft:tripwire_hook";
+        public String itemKeyMarker = "easyvip_item_key";
         public String defaultActivationMode = "extend";
         public boolean forceHighestPriorityAsActive = false;
         public boolean allowPlayerActiveSelection = true;
@@ -69,6 +73,10 @@ public final class EasyVipConfig {
             map.put("allowed_dimensions", common.allowedDimensions);
             map.put("deny_dimensions", common.denyDimensions);
             map.put("auto_expire_interval_seconds", common.autoExpireIntervalSeconds);
+            map.put("variant_selection_timeout_seconds", common.variantSelectionTimeoutSeconds);
+            map.put("notify_pending_variant_on_login", common.notifyPendingVariantOnLogin);
+            map.put("item_key_item_id", common.itemKeyItemId);
+            map.put("item_key_marker", common.itemKeyMarker);
             map.put("default_activation_mode", common.defaultActivationMode);
             map.put("force_highest_priority_as_active", common.forceHighestPriorityAsActive);
             map.put("allow_player_active_selection", common.allowPlayerActiveSelection);
@@ -90,6 +98,10 @@ public final class EasyVipConfig {
         common.allowedDimensions = getStringList(data, "allowed_dimensions", new ArrayList<>());
         common.denyDimensions = getStringList(data, "deny_dimensions", new ArrayList<>());
         common.autoExpireIntervalSeconds = getInt(data, "auto_expire_interval_seconds", 30);
+        common.variantSelectionTimeoutSeconds = getInt(data, "variant_selection_timeout_seconds", 86400);
+        common.notifyPendingVariantOnLogin = getBoolean(data, "notify_pending_variant_on_login", true);
+        common.itemKeyItemId = getString(data, "item_key_item_id", "minecraft:tripwire_hook");
+        common.itemKeyMarker = getString(data, "item_key_marker", "easyvip_item_key");
         common.defaultActivationMode = getString(data, "default_activation_mode", "extend");
         common.forceHighestPriorityAsActive = getBoolean(data, "force_highest_priority_as_active", false);
         common.allowPlayerActiveSelection = getBoolean(data, "allow_player_active_selection", true);
@@ -478,6 +490,9 @@ public final class EasyVipConfig {
         public boolean ftbRanksEnabled = true;
         public boolean luckpermsEnabled = true;
         public String primaryPermissionBridge = "ftbranks"; // ftbranks, luckperms, vanilla
+        public String ftbRanksAddCommand = "ftbranks add {player} {rank}";
+        public String ftbRanksRemoveCommand = "ftbranks remove {player} {rank}";
+        public String ftbRanksSetCommand = "ftbranks set {player} {rank}";
         public boolean sqlEnabled = false;
         public String sqlUrl = "jdbc:sqlite:config/easyvip/data/database.db";
         public String sqlUsername = "";
@@ -491,6 +506,9 @@ public final class EasyVipConfig {
             map.put("ftb_ranks_enabled", integrations.ftbRanksEnabled);
             map.put("luckperms_enabled", integrations.luckpermsEnabled);
             map.put("primary_permission_bridge", integrations.primaryPermissionBridge);
+            map.put("ftb_ranks_add_command", integrations.ftbRanksAddCommand);
+            map.put("ftb_ranks_remove_command", integrations.ftbRanksRemoveCommand);
+            map.put("ftb_ranks_set_command", integrations.ftbRanksSetCommand);
             map.put("sql_enabled", integrations.sqlEnabled);
             map.put("sql_url", integrations.sqlUrl);
             map.put("sql_username", integrations.sqlUsername);
@@ -502,6 +520,9 @@ public final class EasyVipConfig {
         integrations.ftbRanksEnabled = getBoolean(data, "ftb_ranks_enabled", true);
         integrations.luckpermsEnabled = getBoolean(data, "luckperms_enabled", true);
         integrations.primaryPermissionBridge = getString(data, "primary_permission_bridge", "ftbranks");
+        integrations.ftbRanksAddCommand = getString(data, "ftb_ranks_add_command", integrations.ftbRanksAddCommand);
+        integrations.ftbRanksRemoveCommand = getString(data, "ftb_ranks_remove_command", integrations.ftbRanksRemoveCommand);
+        integrations.ftbRanksSetCommand = getString(data, "ftb_ranks_set_command", integrations.ftbRanksSetCommand);
         integrations.sqlEnabled = getBoolean(data, "sql_enabled", false);
         integrations.sqlUrl = getString(data, "sql_url", integrations.sqlUrl);
         integrations.sqlUsername = getString(data, "sql_username", "");

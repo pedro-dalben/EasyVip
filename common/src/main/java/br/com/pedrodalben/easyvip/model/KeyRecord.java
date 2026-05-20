@@ -14,6 +14,7 @@ public class KeyRecord {
     private long createdTime;
     private long expiryTime = -1; // -1 for no expiration
     private Set<UUID> usedBy = new HashSet<>();
+    private Map<UUID, Long> lastUsedAtBy = new HashMap<>();
     private List<Map<String, Object>> actions = new ArrayList<>();
 
     public KeyRecord() {
@@ -105,6 +106,14 @@ public class KeyRecord {
 
     public void setUsedBy(Set<UUID> usedBy) {
         this.usedBy = usedBy;
+    }
+
+    public Map<UUID, Long> getLastUsedAtBy() {
+        return lastUsedAtBy;
+    }
+
+    public void setLastUsedAtBy(Map<UUID, Long> lastUsedAtBy) {
+        this.lastUsedAtBy = lastUsedAtBy;
     }
 
     public List<Map<String, Object>> getActions() {

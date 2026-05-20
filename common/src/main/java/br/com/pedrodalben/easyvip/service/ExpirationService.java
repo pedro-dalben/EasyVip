@@ -17,6 +17,10 @@ public final class ExpirationService {
     public static synchronized void start(MinecraftServer server) {
         if (scheduler != null) return;
 
+        if (server != null && !server.isStopped()) {
+            server.execute(() -> VipService.expireAllDueVips(server));
+        }
+
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "EasyVip-Expiration-Scheduler");
             thread.setDaemon(true);
@@ -32,7 +36,7 @@ public final class ExpirationService {
             try {
                 if (server != null && !server.isStopped()) {
                     server.execute(() -> {
-                        VipService.checkExpirations(server);
+                        VipService.expireAllDueVips(server);
                     });
                 }
             } catch (Exception e) {

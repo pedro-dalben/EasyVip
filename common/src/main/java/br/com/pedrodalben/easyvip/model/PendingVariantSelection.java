@@ -51,4 +51,11 @@ public class PendingVariantSelection {
     public void setTimestamp(long timestamp) {
         this.timestamp = timestamp;
     }
+
+    public boolean isExpired(long timeoutSeconds) {
+        if (timeoutSeconds <= 0) {
+            return false;
+        }
+        return System.currentTimeMillis() - timestamp > (timeoutSeconds * 1000L);
+    }
 }

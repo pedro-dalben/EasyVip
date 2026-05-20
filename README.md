@@ -10,11 +10,11 @@ O projeto é escrito em Java e está estruturado para NeoForge primeiro, com um 
 - Ativação por chaves geradas pelo admin
 - Confirmação opcional antes de consumir chaves
 - Pacotes de recompensa com variantes
-- Integração opcional com LuckPerms e FTB Ranks
+- Integração opcional com LuckPerms e FTB Ranks via comandos seguros
 - Persistência em JSON com escrita atômica e backup automático
 - Configuração em TOML com parser próprio
 - Comando `/easyvip` para jogadores e administradores
-- Evento físico para usar chaves em item com `CUSTOM_DATA`
+- Evento físico para usar chaves em item configurado com `CUSTOM_DATA` e marcador do mod
 
 ## Status atual
 
@@ -77,9 +77,17 @@ Compilar só o Java do módulo NeoForge:
 
 ### Chave física
 
-O mod também lê `DataComponents.CUSTOM_DATA` em qualquer `ItemStack` e procura a tag `easyvip_key`.
+O mod lê `DataComponents.CUSTOM_DATA` apenas no item configurado em `common.toml`:
 
-Se o item contiver essa chave, o uso no clique direito ativa a mesma lógica de `/easyvip use`.
+- `item_key_item_id`
+- padrão: `minecraft:tripwire_hook`
+
+O `ItemStack` precisa conter:
+
+- `easyvip_item_key = true`
+- `easyvip_key = <codigo>`
+
+Isso evita aceitar qualquer item genérico com NBT solto.
 
 ## Comandos
 
@@ -120,6 +128,26 @@ Seleciona o VIP ativo do jogador, quando a troca manual estiver permitida.
 #### `/easyvip variant choose <package> <variant>`
 
 Escolhe uma variante pendente de pacote.
+
+#### `/easyvip variant pending [player]`
+
+Lista pendências de variante.
+
+#### `/easyvip variant clear <player> [package_id]`
+
+Remove pendências de variante de um jogador.
+
+#### `/easyvip time [player]`
+
+Alias de `/easyvip info`.
+
+#### `/viptime [player]`
+
+Alias direto do comando de tempo do VIP.
+
+#### `/usekey <key>`
+
+Alias direto de `/easyvip use`.
 
 ### Admin
 
@@ -165,6 +193,34 @@ Exemplos:
 
 Entrega um pacote de recompensa diretamente para um jogador online.
 
+#### `/easyvip admin giveitemkey <player> <code>`
+
+Entrega um item físico de key usando o item configurado em `item_key_item_id`.
+
+#### `/easyvip key list`
+
+Lista todas as keys cadastradas.
+
+#### `/easyvip key info <code>`
+
+Mostra detalhes de uma key.
+
+#### `/easyvip key delete <code>`
+
+Remove uma key.
+
+#### `/easyvip package list`
+
+Lista pacotes cadastrados.
+
+#### `/easyvip package info <id>`
+
+Mostra detalhes de um pacote.
+
+#### `/easyvip active set <player> <tier>`
+
+Seleciona manualmente o VIP ativo de um jogador.
+
 #### `/easyvip admin audit [page]`
 
 Mostra o log de auditoria administrativo.
@@ -204,6 +260,9 @@ Configurações gerais:
 - `default_activation_mode`
 - `force_highest_priority_as_active`
 - `allow_player_active_selection`
+- `variant_selection_timeout_seconds`
+- `notify_pending_variant_on_login`
+- `item_key_item_id`
 - `log_to_file`
 - `debug`
 - `command_allowlist_enabled`
@@ -234,9 +293,16 @@ Define os tiers VIP:
 
 Define pacotes de recompensa e suas variantes.
 
+- `repeatable`
+- `cooldown_seconds`
+
 ### `reward_keys.toml`
 
 Define recompensas não-VIP geradas por chave.
+
+- `consume_on_use`
+- `cooldown_seconds`
+- `allowed_dimensions`
 
 ### `integrations.toml`
 
@@ -245,10 +311,39 @@ Integrações opcionais:
 - `ftb_ranks_enabled`
 - `luckperms_enabled`
 - `primary_permission_bridge`
+- `ftb_ranks_add_command`
+- `ftb_ranks_remove_command`
+- `ftb_ranks_set_command`
 - `sql_enabled`
 - `sql_url`
 - `sql_username`
 - `sql_password`
+
+## Integração FTB Ranks
+
+O easyVip não depende da API interna do FTB Ranks para mutação de rank.
+
+Ele usa actions seguras com allowlist:
+
+```toml
+[security]
+command_allowlist_enabled = true
+command_allowlist = ["ftbranks ", "team ", "effect ", "give "]
+```
+
+Exemplo:
+
+```toml
+[[tiers.vip.actions_on_activate]]
+type = "add_ftb_rank"
+rank = "vip"
+```
+
+As templates padrão ficam em `integrations.toml` e geram comandos como:
+
+- `ftbranks add {player} {rank}`
+- `ftbranks remove {player} {rank}`
+- `ftbranks set {player} {rank}`
 
 ## Dados persistidos
 
@@ -257,6 +352,12 @@ Os dados em runtime ficam em:
 ```text
 config/easyvip/data/
 ```
+
+- `vips.json`
+- `keys.json`
+- `pending_variants.json`
+- `package_usage.json`
+- `audit_logs.json`
 
 Arquivos gerados:
 

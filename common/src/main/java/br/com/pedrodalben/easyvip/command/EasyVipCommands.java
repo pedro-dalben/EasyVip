@@ -44,6 +44,20 @@ public final class EasyVipCommands {
         root.then(Commands.literal("confirm")
                 .executes(EasyVipCommands::executeConfirmKey));
 
+        // /usekey <key> (alias)
+        dispatcher.register(Commands.literal("usekey")
+                .requires(src -> hasPermission(src, "easyvip.use"))
+                .then(Commands.argument("key", StringArgumentType.string())
+                        .executes(EasyVipCommands::executeUseKey)));
+
+        // /viptime [player] (alias)
+        dispatcher.register(Commands.literal("viptime")
+                .requires(src -> hasPermission(src, "easyvip.use"))
+                .executes(ctx -> executeInfo(ctx, null))
+                .then(Commands.argument("player", GameProfileArgument.gameProfile())
+                        .requires(src -> hasPermission(src, "easyvip.admin"))
+                        .executes(ctx -> executeInfo(ctx, resolveGameProfiles(ctx, "player")))));
+
         // /easyvip info
         root.then(Commands.literal("info")
                 .executes(ctx -> executeInfo(ctx, null))
@@ -56,12 +70,32 @@ public final class EasyVipCommands {
                 .then(Commands.argument("tier", StringArgumentType.word())
                         .executes(EasyVipCommands::executeSelectVip)));
 
-        // /easyvip variant choose <package> <variant>
-        root.then(Commands.literal("variant")
-                .then(Commands.literal("choose")
-                        .then(Commands.argument("package", StringArgumentType.word())
-                                .then(Commands.argument("variant", StringArgumentType.word())
-                                        .executes(EasyVipCommands::executeChooseVariant)))));
+        // /easyvip variant ...
+        LiteralArgumentBuilder<CommandSourceStack> variant = Commands.literal("variant")
+                .requires(src -> hasPermission(src, "easyvip.use"));
+
+        variant.then(Commands.literal("choose")
+                .then(Commands.argument("package", StringArgumentType.word())
+                        .then(Commands.argument("variant", StringArgumentType.word())
+                                .executes(EasyVipCommands::executeChooseVariant))));
+
+        variant.then(Commands.literal("pending")
+                .executes(ctx -> executeVariantPending(ctx, null))
+                .then(Commands.argument("player", GameProfileArgument.gameProfile())
+                        .requires(src -> hasPermission(src, "easyvip.admin"))
+                        .executes(ctx -> executeVariantPending(ctx, resolveGameProfiles(ctx, "player")))));
+
+        variant.then(Commands.literal("clear")
+                .then(Commands.argument("player", GameProfileArgument.gameProfile())
+                        .requires(src -> hasPermission(src, "easyvip.admin"))
+                        .executes(ctx -> executeVariantClear(ctx, resolveGameProfiles(ctx, "player"), null))
+                        .then(Commands.argument("package_id", StringArgumentType.word())
+                                .executes(ctx -> executeVariantClear(
+                                        ctx,
+                                        resolveGameProfiles(ctx, "player"),
+                                        StringArgumentType.getString(ctx, "package_id"))))));
+
+        root.then(variant);
 
         // ─── Admin Subcommands ──────────────────────────────────
         LiteralArgumentBuilder<CommandSourceStack> admin = Commands.literal("admin")
@@ -107,6 +141,30 @@ public final class EasyVipCommands {
                         .then(Commands.argument("package_id", StringArgumentType.word())
                                 .executes(EasyVipCommands::executeGivePackage))));
 
+        // /easyvip admin giveitemkey <player> <code>
+        admin.then(Commands.literal("giveitemkey")
+                .then(Commands.argument("player", GameProfileArgument.gameProfile())
+                        .then(Commands.argument("code", StringArgumentType.word())
+                                .executes(EasyVipCommands::executeGiveItemKey))));
+
+        // /easyvip key ...
+        LiteralArgumentBuilder<CommandSourceStack> key = Commands.literal("key")
+                .requires(src -> hasPermission(src, "easyvip.admin"));
+        key.then(Commands.literal("list").executes(EasyVipCommands::executeKeyList));
+        key.then(Commands.literal("info")
+                .then(Commands.argument("code", StringArgumentType.word()).executes(EasyVipCommands::executeKeyInfo)));
+        key.then(Commands.literal("delete")
+                .then(Commands.argument("code", StringArgumentType.word()).executes(EasyVipCommands::executeKeyDelete)));
+        admin.then(key);
+
+        // /easyvip package ...
+        LiteralArgumentBuilder<CommandSourceStack> packageCmd = Commands.literal("package")
+                .requires(src -> hasPermission(src, "easyvip.admin"));
+        packageCmd.then(Commands.literal("list").executes(EasyVipCommands::executePackageList));
+        packageCmd.then(Commands.literal("info")
+                .then(Commands.argument("id", StringArgumentType.word()).executes(EasyVipCommands::executePackageInfo)));
+        admin.then(packageCmd);
+
         // /easyvip admin audit [page]
         admin.then(Commands.literal("audit")
                 .executes(ctx -> executeAudit(ctx, 1))
@@ -126,6 +184,22 @@ public final class EasyVipCommands {
         // /easyvip config validate
         config.then(Commands.literal("validate")
                 .executes(EasyVipCommands::executeConfigValidate));
+
+        // /easyvip active set <player> <tier>
+        LiteralArgumentBuilder<CommandSourceStack> active = Commands.literal("active")
+                .requires(src -> hasPermission(src, "easyvip.admin"));
+        active.then(Commands.literal("set")
+                .then(Commands.argument("player", GameProfileArgument.gameProfile())
+                        .then(Commands.argument("tier", StringArgumentType.word())
+                                .executes(EasyVipCommands::executeActiveSet))));
+        root.then(active);
+
+        // /easyvip time [player]
+        root.then(Commands.literal("time")
+                .executes(ctx -> executeInfo(ctx, null))
+                .then(Commands.argument("player", GameProfileArgument.gameProfile())
+                        .requires(src -> hasPermission(src, "easyvip.admin"))
+                        .executes(ctx -> executeInfo(ctx, resolveGameProfiles(ctx, "player")))));
 
         root.then(config);
 
@@ -326,6 +400,76 @@ public final class EasyVipCommands {
         return success ? 1 : 0;
     }
 
+    private static int executeVariantPending(CommandContext<CommandSourceStack> ctx, Collection<GameProfile> targets) {
+        CommandSourceStack src = ctx.getSource();
+        Collection<GameProfile> profiles = targets;
+        if (profiles == null) {
+            if (!(src.getEntity() instanceof ServerPlayer player)) {
+                src.sendFailure(Component.literal(EasyVipConfig.messages.playerOnly));
+                return 0;
+            }
+            profiles = List.of(player.getGameProfile());
+        }
+
+        GameProfile profile = profiles.iterator().next();
+        List<PendingVariantSelection> pending = PersistenceManager.getPendingVariants(profile.getId());
+        if (pending.isEmpty()) {
+            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7Sem variantes pendentes para " + profile.getName()), false);
+            return 1;
+        }
+
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §eVariantes pendentes de " + profile.getName() + ": " + pending.size()), false);
+        for (PendingVariantSelection sel : pending) {
+            src.sendSuccess(() -> Component.literal("§7- §f" + sel.getPackageId() + " §8| §7" + String.join(", ", sel.getVariants())), false);
+        }
+        return 1;
+    }
+
+    private static int executeVariantClear(CommandContext<CommandSourceStack> ctx, Collection<GameProfile> targets, String packageId) {
+        CommandSourceStack src = ctx.getSource();
+        Collection<GameProfile> profiles = targets;
+        if (profiles == null || profiles.isEmpty()) {
+            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            return 0;
+        }
+
+        GameProfile profile = profiles.iterator().next();
+        List<PendingVariantSelection> pending = PersistenceManager.getPendingVariants(profile.getId());
+        if (pending.isEmpty()) {
+            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7Nenhuma variante pendente encontrada."), false);
+            return 1;
+        }
+
+        if (packageId == null) {
+            for (PendingVariantSelection sel : new ArrayList<>(pending)) {
+                PersistenceManager.removePendingVariant(profile.getId(), sel.getPackageId());
+            }
+        } else {
+            PersistenceManager.removePendingVariant(profile.getId(), packageId);
+        }
+
+        src.sendSuccess(() -> Component.literal("§aPendências de variante removidas com sucesso."), true);
+        return 1;
+    }
+
+    private static int executeActiveSet(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        Collection<GameProfile> profiles = resolveGameProfiles(ctx, "player");
+        if (profiles.isEmpty()) {
+            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            return 0;
+        }
+        GameProfile profile = profiles.iterator().next();
+        String tier = StringArgumentType.getString(ctx, "tier");
+        boolean success = VipService.setActiveVip(src.getServer(), profile.getId(), tier, operatorName(src));
+        if (success) {
+            src.sendSuccess(() -> Component.literal("§aVIP ativo alterado com sucesso."), true);
+            return 1;
+        }
+        src.sendFailure(Component.literal("§cNão foi possível alterar o VIP ativo."));
+        return 0;
+    }
+
     // ─── Admin Executions ───────────────────────────────────
 
     private static int executeAddVip(CommandContext<CommandSourceStack> ctx) {
@@ -445,6 +589,101 @@ public final class EasyVipCommands {
         return success ? 1 : 0;
     }
 
+    private static int executeGiveItemKey(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        Collection<GameProfile> profiles = resolveGameProfiles(ctx, "player");
+        if (profiles.isEmpty()) {
+            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            return 0;
+        }
+
+        GameProfile profile = profiles.iterator().next();
+        ServerPlayer player = src.getServer().getPlayerList().getPlayer(profile.getId());
+        if (player == null) {
+            src.sendFailure(Component.literal("§cO jogador precisa estar online para receber o item."));
+            return 0;
+        }
+
+        String code = StringArgumentType.getString(ctx, "code");
+        KeyRecord record = PersistenceManager.getKey(code.trim().toUpperCase());
+        if (record == null && !EasyVipConfig.common.caseSensitiveKeys) {
+            record = PersistenceManager.getKey(code.trim());
+        }
+        if (record == null) {
+            src.sendFailure(Component.literal("§cChave não encontrada."));
+            return 0;
+        }
+
+        player.getInventory().add(KeyService.createPhysicalKeyItem(record.getCode()));
+        src.sendSuccess(() -> Component.literal("§aItem de chave entregue com segurança."), true);
+        return 1;
+    }
+
+    private static int executeKeyList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        List<KeyRecord> keys = PersistenceManager.getAllKeys();
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §eKeys cadastradas: §f" + keys.size()), false);
+        for (KeyRecord key : keys) {
+            src.sendSuccess(() -> Component.literal("§7- §f" + key.getCode() + " §8| §e" + key.getType() + " §8| §7usos " + key.getUsedCount() + "/" + key.getMaxUses()), false);
+        }
+        return 1;
+    }
+
+    private static int executeKeyInfo(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String code = StringArgumentType.getString(ctx, "code").trim();
+        KeyRecord key = PersistenceManager.getKey(code);
+        if (key == null && !EasyVipConfig.common.caseSensitiveKeys) {
+            key = PersistenceManager.getKey(code.toUpperCase());
+        }
+        if (key == null) {
+            src.sendFailure(Component.literal("§cChave não encontrada."));
+            return 0;
+        }
+        KeyRecord finalKey = key;
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + finalKey.getCode() + " §8| §f" + finalKey.getType()
+                + " §8| §f" + finalKey.getUsedCount() + "/" + finalKey.getMaxUses()), false);
+        return 1;
+    }
+
+    private static int executeKeyDelete(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String code = StringArgumentType.getString(ctx, "code").trim();
+        KeyRecord key = PersistenceManager.getKey(code);
+        if (key == null && !EasyVipConfig.common.caseSensitiveKeys) {
+            key = PersistenceManager.getKey(code.toUpperCase());
+        }
+        if (key == null) {
+            src.sendFailure(Component.literal("§cChave não encontrada."));
+            return 0;
+        }
+        PersistenceManager.removeKey(key.getCode());
+        src.sendSuccess(() -> Component.literal("§aChave removida."), true);
+        return 1;
+    }
+
+    private static int executePackageList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §ePacotes cadastrados: §f" + EasyVipConfig.packages.list.size()), false);
+        for (EasyVipConfig.PackageDefinition pkg : EasyVipConfig.packages.list.values()) {
+            src.sendSuccess(() -> Component.literal("§7- §f" + pkg.id + " §8| §e" + pkg.displayName), false);
+        }
+        return 1;
+    }
+
+    private static int executePackageInfo(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String id = StringArgumentType.getString(ctx, "id");
+        EasyVipConfig.PackageDefinition pkg = EasyVipConfig.packages.list.get(id);
+        if (pkg == null) {
+            src.sendFailure(Component.literal("§cPacote não encontrado."));
+            return 0;
+        }
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + pkg.id + " §8| §f" + pkg.displayName
+                + " §8| §7variantes " + pkg.variants.size()), false);
+        return 1;
+    }
+
     private static int executeAudit(CommandContext<CommandSourceStack> ctx, int page) {
         CommandSourceStack src = ctx.getSource();
         List<AuditLogRecord> logs = PersistenceManager.getAuditLogs();
@@ -484,6 +723,13 @@ public final class EasyVipCommands {
         }
 
         return 1;
+    }
+
+    private static String operatorName(CommandSourceStack src) {
+        if (src.getEntity() instanceof ServerPlayer op) {
+            return op.getGameProfile().getName();
+        }
+        return "Console";
     }
 
     private static Collection<GameProfile> resolveGameProfiles(CommandContext<CommandSourceStack> ctx, String argumentName) {

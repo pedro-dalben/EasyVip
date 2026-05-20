@@ -11,9 +11,11 @@ import br.com.pedrodalben.easyvip.service.VipService;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -34,6 +36,7 @@ import java.util.Map;
 public final class NeoForgeEasyVipMod {
 
     private static final String KEY_TAG = "easyvip_key";
+    private static final String MARKER_TAG = "easyvip_item_key";
 
     private final NeoForgePlatformBridge platformBridge = new NeoForgePlatformBridge();
 
@@ -86,13 +89,19 @@ public final class NeoForgeEasyVipMod {
             return;
         }
 
+        ResourceLocation expectedItem = ResourceLocation.tryParse(EasyVipConfig.common.itemKeyItemId);
+        Item expected = expectedItem == null ? null : net.minecraft.core.registries.BuiltInRegistries.ITEM.get(expectedItem);
+        if (expected == null || !stack.is(expected)) {
+            return;
+        }
+
         CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
         if (customData == null || customData.isEmpty()) {
             return;
         }
 
         CompoundTag tag = customData.copyTag();
-        if (!tag.contains(KEY_TAG)) {
+        if (!tag.contains(MARKER_TAG) || !tag.getBoolean(MARKER_TAG) || !tag.contains(KEY_TAG)) {
             return;
         }
 

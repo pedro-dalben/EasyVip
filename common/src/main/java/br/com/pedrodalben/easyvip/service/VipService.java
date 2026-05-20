@@ -4,6 +4,7 @@ import br.com.pedrodalben.easyvip.action.ActionExecutor;
 import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.*;
 import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
+import br.com.pedrodalben.easyvip.util.DurationParser;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -15,35 +16,7 @@ public final class VipService {
     }
 
     public static long parseDurationMillis(String durationStr) {
-        if (durationStr == null || durationStr.equalsIgnoreCase("permanent")) {
-            return -1;
-        }
-        durationStr = durationStr.toLowerCase().trim();
-        long millis = 0;
-        StringBuilder num = new StringBuilder();
-        for (int i = 0; i < durationStr.length(); i++) {
-            char c = durationStr.charAt(i);
-            if (Character.isDigit(c)) {
-                num.append(c);
-            } else {
-                if (num.length() == 0) continue;
-                long val = Long.parseLong(num.toString());
-                num.setLength(0);
-                switch (c) {
-                    case 's': millis += val * 1000L; break;
-                    case 'm': millis += val * 60L * 1000L; break;
-                    case 'h': millis += val * 60L * 60L * 1000L; break;
-                    case 'd': millis += val * 24L * 60L * 60L * 1000L; break;
-                    case 'w': millis += val * 7L * 24L * 60L * 60L * 1000L; break;
-                    case 'M': millis += val * 30L * 24L * 60L * 60L * 1000L; break;
-                    case 'y': millis += val * 365L * 24L * 60L * 60L * 1000L; break;
-                }
-            }
-        }
-        if (num.length() > 0) {
-            millis += Long.parseLong(num.toString()) * 24L * 60L * 60L * 1000L;
-        }
-        return millis;
+        return DurationParser.parseDurationMillis(durationStr);
     }
 
     public static boolean addVip(MinecraftServer server, UUID uuid, String tierId, String durationStr, String operator) {
@@ -63,11 +36,17 @@ public final class VipService {
         PlayerVipRecord record = registry.getVips().get(tierId);
         ServerPlayer player = server.getPlayerList().getPlayer(uuid);
         boolean isOnline = player != null;
+        String targetName = resolvePlayerName(server, uuid);
+        if (isOnline) {
+            targetName = player.getGameProfile().getName();
+        }
 
         Map<String, String> ctx = new HashMap<>();
         ctx.put("tier_id", tierId);
         ctx.put("tier_display", tierDef.displayName);
         ctx.put("duration", durationStr);
+        ctx.put("player", targetName);
+        ctx.put("player_uuid", uuid.toString());
 
         if (record == null || record.isExpired()) {
             // New VIP tier activation
@@ -125,10 +104,10 @@ public final class VipService {
             }
         }
 
+        registry.setPlayerName(targetName);
         evaluateActiveVip(server, uuid, registry);
         PersistenceManager.updatePlayerVips(uuid, registry);
 
-        String targetName = isOnline ? player.getGameProfile().getName() : uuid.toString();
         PersistenceManager.log(operator, "add_vip", "VIP tier " + tierId + " added to " + targetName + " with duration " + durationStr);
 
         return true;
@@ -160,6 +139,7 @@ public final class VipService {
             ActionExecutor.execute(player, tierDef.actionsOnRemove, ctx);
         }
 
+        registry.setPlayerName(resolvePlayerName(server, uuid));
         evaluateActiveVip(server, uuid, registry);
         PersistenceManager.updatePlayerVips(uuid, registry);
 
@@ -214,6 +194,7 @@ public final class VipService {
             }
         }
 
+        registry.setPlayerName(resolvePlayerName(server, uuid));
         PersistenceManager.updatePlayerVips(uuid, registry);
         PersistenceManager.log(operator, "change_active_vip", "Set active VIP tier " + tierId + " for " + uuid);
         return true;
@@ -298,6 +279,68 @@ public final class VipService {
         }
     }
 
+    public static int expireAllDueVips(MinecraftServer server) {
+        int expiredCount = 0;
+        for (Map.Entry<UUID, PlayerVipRegistry> entry : PersistenceManager.getAllPlayerVips().entrySet()) {
+            expiredCount += expireDueVipsForPlayer(server, entry.getKey());
+        }
+        return expiredCount;
+    }
+
+    public static int expireDueVipsForPlayer(MinecraftServer server, UUID uuid) {
+        PlayerVipRegistry registry = PersistenceManager.getPlayerVips(uuid);
+        if (registry == null || registry.getVips().isEmpty()) {
+            return 0;
+        }
+
+        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+        String playerName = resolvePlayerName(server, uuid);
+        registry.setPlayerName(playerName);
+
+        boolean changed = false;
+        int expiredCount = 0;
+        Iterator<Map.Entry<String, PlayerVipRecord>> it = registry.getVips().entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, PlayerVipRecord> entry = it.next();
+            PlayerVipRecord record = entry.getValue();
+            if (record.isExpired()) {
+                it.remove();
+                changed = true;
+                expiredCount++;
+
+                EasyVipConfig.VipTierDefinition tierDef = EasyVipConfig.tiers.list.get(record.getTierId());
+                Map<String, String> ctx = new HashMap<>();
+                ctx.put("tier_id", record.getTierId());
+                ctx.put("tier_display", tierDef != null ? tierDef.displayName : record.getTierId());
+                ctx.put("player", playerName);
+                ctx.put("player_uuid", uuid.toString());
+
+                if (player != null && tierDef != null) {
+                    if (record.isActive()) {
+                        ActionExecutor.execute(player, tierDef.actionsOnUnsetActive, ctx);
+                    }
+                    ActionExecutor.execute(player, tierDef.actionsOnExpire, ctx);
+                    player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                            ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExpired, ctx)
+                    ));
+                }
+
+                PersistenceManager.log("System", "vip_expired", "VIP tier " + record.getTierId() + " expired for " + playerName);
+            }
+        }
+
+        if (changed) {
+            evaluateActiveVip(server, uuid, registry);
+            PersistenceManager.updatePlayerVips(uuid, registry);
+        }
+
+        return expiredCount;
+    }
+
+    public static void checkExpirations(MinecraftServer server) {
+        expireAllDueVips(server);
+    }
+
     public static void handlePlayerJoin(ServerPlayer player) {
         UUID uuid = player.getUUID();
         PlayerVipRegistry registry = PersistenceManager.getPlayerVips(uuid);
@@ -306,7 +349,8 @@ public final class VipService {
         }
 
         MinecraftServer server = player.getServer();
-        boolean changed = false;
+        registry.setPlayerName(player.getGameProfile().getName());
+        expireDueVipsForPlayer(server, uuid);
 
         for (PlayerVipRecord record : registry.getVips().values()) {
             if (record.isPendingActivateActions()) {
@@ -316,11 +360,11 @@ public final class VipService {
                     ctx.put("tier_id", record.getTierId());
                     ctx.put("tier_display", tierDef.displayName);
                     ctx.put("duration", "activation");
+                    ctx.put("player", player.getGameProfile().getName());
 
                     ActionExecutor.execute(player, tierDef.actionsOnActivate, ctx);
                 }
                 record.setPendingActivateActions(false);
-                changed = true;
             }
         }
 
@@ -328,49 +372,16 @@ public final class VipService {
         PersistenceManager.updatePlayerVips(uuid, registry);
     }
 
-    public static void checkExpirations(MinecraftServer server) {
-        long now = System.currentTimeMillis();
-        List<UUID> toSave = new ArrayList<>();
-
-        for (UUID uuid : new ArrayList<>(server.getPlayerList().getPlayers().stream().map(ServerPlayer::getUUID).toList())) {
-            PlayerVipRegistry registry = PersistenceManager.getPlayerVips(uuid);
-            if (registry != null) {
-                boolean changed = false;
-                ServerPlayer player = server.getPlayerList().getPlayer(uuid);
-
-                Iterator<Map.Entry<String, PlayerVipRecord>> it = registry.getVips().entrySet().iterator();
-                while (it.hasNext()) {
-                    Map.Entry<String, PlayerVipRecord> entry = it.next();
-                    PlayerVipRecord record = entry.getValue();
-
-                    if (record.isExpired()) {
-                        it.remove();
-                        changed = true;
-
-                        EasyVipConfig.VipTierDefinition tierDef = EasyVipConfig.tiers.list.get(record.getTierId());
-                        if (player != null && tierDef != null) {
-                            Map<String, String> ctx = new HashMap<>();
-                            ctx.put("tier_id", record.getTierId());
-                            ctx.put("tier_display", tierDef.displayName);
-
-                            if (record.isActive()) {
-                                ActionExecutor.execute(player, tierDef.actionsOnUnsetActive, ctx);
-                            }
-                            ActionExecutor.execute(player, tierDef.actionsOnExpire, ctx);
-                            player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExpired, ctx)
-                            ));
-                        }
-
-                        PersistenceManager.log("System", "vip_expired", "VIP tier " + record.getTierId() + " expired for " + uuid);
-                    }
+    private static String resolvePlayerName(MinecraftServer server, UUID uuid) {
+        if (server != null) {
+            try {
+                Optional<com.mojang.authlib.GameProfile> profile = server.getProfileCache().get(uuid);
+                if (profile.isPresent() && profile.get().getName() != null) {
+                    return profile.get().getName();
                 }
-
-                if (changed) {
-                    evaluateActiveVip(server, uuid, registry);
-                    PersistenceManager.updatePlayerVips(uuid, registry);
-                }
+            } catch (Exception ignored) {
             }
         }
+        return uuid.toString();
     }
 }

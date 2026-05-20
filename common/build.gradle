@@ -26,4 +26,8 @@ dependencies {
     compileOnly "curse.maven:ftb-ranks-314905:6431744"
     compileOnly "curse.maven:ftb-library-404465:7746959"
     compileOnly "net.luckperms:api:5.4"
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

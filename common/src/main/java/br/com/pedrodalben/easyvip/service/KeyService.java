@@ -4,15 +4,20 @@ import br.com.pedrodalben.easyvip.action.ActionExecutor;
 import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.KeyRecord;
 import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
+import br.com.pedrodalben.easyvip.util.UniqueCodeGenerator;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
 
-import java.security.SecureRandom;
 import java.util.*;
 
 public final class KeyService {
 
-    private static final SecureRandom RANDOM = new SecureRandom();
     private static final Map<UUID, PendingConfirmation> confirmations = new HashMap<>();
 
     private KeyService() {
@@ -44,15 +49,17 @@ public final class KeyService {
     }
 
     public static String generateRandomCode() {
-        String charset = EasyVipConfig.common.keyCharset;
-        int length = EasyVipConfig.common.keyLength;
-        String prefix = EasyVipConfig.common.keyPrefix;
+        return generateRandomCode(PersistenceManager::getKey);
+    }
 
-        StringBuilder sb = new StringBuilder(prefix);
-        for (int i = 0; i < length; i++) {
-            sb.append(charset.charAt(RANDOM.nextInt(charset.length())));
-        }
-        return sb.toString();
+    public static String generateRandomCode(java.util.function.Function<String, KeyRecord> keyLookup) {
+        return UniqueCodeGenerator.generate(
+                EasyVipConfig.common.keyCharset,
+                EasyVipConfig.common.keyLength,
+                EasyVipConfig.common.keyPrefix,
+                candidate -> keyLookup.apply(candidate) == null,
+                1000
+        );
     }
 
     public static KeyRecord generateVipKey(String tierId, String durationStr, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
@@ -133,6 +140,9 @@ public final class KeyService {
         // Consume key
         boolean success = false;
         Map<String, String> ctx = new HashMap<>();
+        String playerName = resolvePlayerName(player.getServer(), uuid);
+        ctx.put("player", playerName);
+        ctx.put("player_uuid", uuid.toString());
 
         if (record.getType().equalsIgnoreCase("vip")) {
             EasyVipConfig.VipTierDefinition tierDef = EasyVipConfig.tiers.list.get(record.getTierId());
@@ -142,33 +152,96 @@ public final class KeyService {
             ctx.put("tier_display", tierDisplay);
             ctx.put("duration", record.getDuration());
 
-            success = VipService.addVip(player.getServer(), uuid, record.getTierId(), record.getDuration(), player.getGameProfile().getName());
+            success = VipService.addVip(player.getServer(), uuid, record.getTierId(), record.getDuration(), playerName);
         } else if (record.getType().equalsIgnoreCase("reward")) {
             ctx.put("reward_key_id", record.getRewardKeyId());
-            List<Map<String, Object>> actions = record.getActions();
-            if (actions == null || actions.isEmpty()) {
-                EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
-                if (rkDef != null) {
-                    actions = rkDef.actions;
-                    ctx.put("key_display", rkDef.displayName);
+            EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
+            if (rkDef == null) {
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx)
+                ));
+                return RedeemResult.ERROR;
+            }
+            if (EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty()) {
+                if (!isDimensionAllowed(player.level().dimension().location().toString(), EasyVipConfig.common.allowedDimensions)) {
+                    return RedeemResult.ERROR;
                 }
             }
+            if (!rkDef.allowedDimensions.isEmpty() && !isDimensionAllowed(player.level().dimension().location().toString(), rkDef.allowedDimensions)) {
+                return RedeemResult.ERROR;
+            }
 
-            ActionExecutor.execute(player, actions, ctx);
+            List<Map<String, Object>> actions = record.getActions();
+            if (actions == null || actions.isEmpty()) {
+                actions = rkDef.actions;
+                ctx.put("key_display", rkDef.displayName);
+            }
+            if (actions == null || actions.isEmpty()) {
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx)
+                ));
+                return RedeemResult.ERROR;
+            }
+
+            Long lastUsed = record.getLastUsedAtBy().get(uuid);
+            long cooldownMs = rkDef.cooldownSeconds > 0 ? rkDef.cooldownSeconds * 1000L : 0L;
+            if (cooldownMs > 0 && lastUsed != null && System.currentTimeMillis() - lastUsed < cooldownMs) {
+                return RedeemResult.ERROR;
+            }
+
+            boolean actionsOk = ActionExecutor.execute(player, actions, ctx);
+            if (!actionsOk) {
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx)
+                ));
+                return RedeemResult.ERROR;
+            }
             success = true;
         }
 
         if (success) {
-            record.setUsedCount(record.getUsedCount() + 1);
-            record.getUsedBy().add(uuid);
+            if ("reward".equalsIgnoreCase(record.getType())) {
+                EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
+                if (rkDef != null && rkDef.consumeOnUse) {
+                    record.setUsedCount(record.getUsedCount() + 1);
+                    record.getUsedBy().add(uuid);
+                }
+                record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
+            } else {
+                record.setUsedCount(record.getUsedCount() + 1);
+                record.getUsedBy().add(uuid);
+            }
             PersistenceManager.putKey(record);
 
             confirmations.remove(uuid);
-            PersistenceManager.log(player.getGameProfile().getName(), "redeem_key", "Redeemed key: " + code);
+            PersistenceManager.log(playerName, "redeem_key", "Redeemed key: " + code);
             return RedeemResult.SUCCESS;
         }
 
         return RedeemResult.ERROR;
+    }
+
+    private static boolean isDimensionAllowed(String dimensionId, List<String> allowedList) {
+        String normalized = dimensionId == null ? "" : dimensionId.toLowerCase();
+        for (String entry : allowedList) {
+            if (normalized.equals(entry.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String resolvePlayerName(MinecraftServer server, UUID uuid) {
+        if (server != null) {
+            try {
+                Optional<com.mojang.authlib.GameProfile> profile = server.getProfileCache().get(uuid);
+                if (profile.isPresent() && profile.get().getName() != null) {
+                    return profile.get().getName();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return uuid.toString();
     }
 
     public static RedeemResult confirmPending(ServerPlayer player) {
@@ -179,5 +252,24 @@ public final class KeyService {
             return RedeemResult.INVALID_KEY;
         }
         return redeemKey(player, pc.code, true);
+    }
+
+    public static ItemStack createPhysicalKeyItem(String keyCode) {
+        ResourceLocation itemId = ResourceLocation.tryParse(EasyVipConfig.common.itemKeyItemId);
+        if (itemId == null) {
+            throw new IllegalArgumentException("Invalid item key item id: " + EasyVipConfig.common.itemKeyItemId);
+        }
+
+        net.minecraft.world.item.Item item = net.minecraft.core.registries.BuiltInRegistries.ITEM.get(itemId);
+        if (item == null) {
+            throw new IllegalArgumentException("Configured item key item does not exist: " + EasyVipConfig.common.itemKeyItemId);
+        }
+
+        ItemStack stack = new ItemStack(item, 1);
+        CompoundTag tag = new CompoundTag();
+        tag.putBoolean("easyvip_item_key", true);
+        tag.putString("easyvip_key", keyCode);
+        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+        return stack;
     }
 }

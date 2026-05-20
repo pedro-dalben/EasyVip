@@ -14,6 +14,43 @@ public final class PackageService {
     private PackageService() {
     }
 
+    public static int cleanupExpiredPendingVariants() {
+        int removed = 0;
+        int timeout = EasyVipConfig.common.variantSelectionTimeoutSeconds;
+        for (Map.Entry<UUID, List<PendingVariantSelection>> entry : PersistenceManager.getAllPendingVariants().entrySet()) {
+            UUID uuid = entry.getKey();
+            for (PendingVariantSelection selection : new ArrayList<>(entry.getValue())) {
+                if (selection.isExpired(timeout)) {
+                    PersistenceManager.removePendingVariant(uuid, selection.getPackageId());
+                    removed++;
+                }
+            }
+        }
+        return removed;
+    }
+
+    public static void notifyPendingVariantsOnLogin(ServerPlayer player) {
+        if (!EasyVipConfig.common.notifyPendingVariantOnLogin) {
+            return;
+        }
+        List<PendingVariantSelection> pendingList = PersistenceManager.getPendingVariants(player.getUUID());
+        if (pendingList.isEmpty()) {
+            return;
+        }
+        for (PendingVariantSelection selection : pendingList) {
+            if (!selection.isExpired(EasyVipConfig.common.variantSelectionTimeoutSeconds)) {
+                EasyVipConfig.PackageDefinition def = EasyVipConfig.packages.list.get(selection.getPackageId());
+                String pkgDisplay = def != null ? def.displayName : selection.getPackageId();
+                Map<String, String> ctx = new HashMap<>();
+                ctx.put("package", pkgDisplay);
+                ctx.put("package_id", selection.getPackageId());
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.variantPending, ctx)
+                ));
+            }
+        }
+    }
+
     public static boolean givePackage(ServerPlayer player, String packageId) {
         EasyVipConfig.PackageDefinition def = EasyVipConfig.packages.list.get(packageId);
         if (def == null) {
@@ -21,6 +58,27 @@ public final class PackageService {
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.packageNotFound, new HashMap<>())
             ));
             return false;
+        }
+
+        if (!def.repeatable) {
+            Map<String, Long> usage = PersistenceManager.getPackageUsage(player.getUUID());
+            if (usage.containsKey(packageId)) {
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cEste pacote já foi resgatado anteriormente.", new HashMap<>())
+                ));
+                return false;
+            }
+        }
+
+        if (def.cooldownSeconds > 0) {
+            Map<String, Long> usage = PersistenceManager.getPackageUsage(player.getUUID());
+            Long lastUsed = usage.get(packageId);
+            if (lastUsed != null && System.currentTimeMillis() - lastUsed < (def.cooldownSeconds * 1000L)) {
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cEste pacote ainda está em cooldown.", new HashMap<>())
+                ));
+                return false;
+            }
         }
 
         Map<String, String> ctx = new HashMap<>();
@@ -31,6 +89,7 @@ public final class PackageService {
             List<String> variantNames = new ArrayList<>(def.variants.keySet());
             PendingVariantSelection pending = new PendingVariantSelection(player.getUUID(), packageId, variantNames);
             PersistenceManager.addPendingVariant(player.getUUID(), pending);
+            markPackageUsage(player.getUUID(), packageId);
 
             String varMsg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.variantPending;
             player.sendSystemMessage(Component.literal(
@@ -39,7 +98,11 @@ public final class PackageService {
             return true;
         } else {
             // No variants, execute actions directly
-            ActionExecutor.execute(player, def.actions, ctx);
+            boolean ok = ActionExecutor.execute(player, def.actions, ctx);
+            if (!ok) {
+                return false;
+            }
+            markPackageUsage(player.getUUID(), packageId);
             player.sendSystemMessage(Component.literal(
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.packageGiven, ctx)
             ));
@@ -50,6 +113,7 @@ public final class PackageService {
 
     public static boolean chooseVariant(ServerPlayer player, String packageId, String variantName) {
         UUID uuid = player.getUUID();
+        cleanupExpiredPendingVariants();
         List<PendingVariantSelection> pendingList = PersistenceManager.getPendingVariants(uuid);
         PendingVariantSelection match = null;
 
@@ -89,10 +153,14 @@ public final class PackageService {
         ctx.put("variant", variantName);
 
         // Execute base actions + variant actions
-        ActionExecutor.execute(player, def.actions, ctx);
-        ActionExecutor.execute(player, variantActions, ctx);
+        boolean ok = ActionExecutor.execute(player, def.actions, ctx);
+        ok = ActionExecutor.execute(player, variantActions, ctx) && ok;
+        if (!ok) {
+            return false;
+        }
 
         PersistenceManager.removePendingVariant(uuid, packageId);
+        markPackageUsage(uuid, packageId);
 
         player.sendSystemMessage(Component.literal(
                 ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.variantSelected, ctx)
@@ -102,5 +170,11 @@ public final class PackageService {
                 "Selected variant " + variantName + " for package " + packageId);
 
         return true;
+    }
+
+    public static void markPackageUsage(UUID uuid, String packageId) {
+        Map<String, Long> usage = PersistenceManager.getPackageUsage(uuid);
+        usage.put(packageId, System.currentTimeMillis());
+        PersistenceManager.updatePackageUsage(uuid, usage);
     }
 }
