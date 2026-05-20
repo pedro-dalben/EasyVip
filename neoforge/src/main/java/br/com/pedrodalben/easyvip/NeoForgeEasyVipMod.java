@@ -7,17 +7,13 @@ import br.com.pedrodalben.easyvip.model.KeyRecord;
 import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
 import br.com.pedrodalben.easyvip.service.ExpirationService;
 import br.com.pedrodalben.easyvip.service.KeyService;
+import br.com.pedrodalben.easyvip.service.PackageService;
 import br.com.pedrodalben.easyvip.service.VipService;
-import net.minecraft.core.component.DataComponents;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.CustomData;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
@@ -36,7 +32,6 @@ import java.util.Map;
 public final class NeoForgeEasyVipMod {
 
     private static final String KEY_TAG = "easyvip_key";
-    private static final String MARKER_TAG = "easyvip_item_key";
 
     private final NeoForgePlatformBridge platformBridge = new NeoForgePlatformBridge();
 
@@ -74,6 +69,8 @@ public final class NeoForgeEasyVipMod {
     @SubscribeEvent
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            PackageService.cleanupExpiredPendingVariants(player.getUUID());
+            PackageService.notifyPendingVariantsOnLogin(player);
             VipService.handlePlayerJoin(player);
         }
     }
@@ -89,23 +86,13 @@ public final class NeoForgeEasyVipMod {
             return;
         }
 
-        ResourceLocation expectedItem = ResourceLocation.tryParse(EasyVipConfig.common.itemKeyItemId);
-        Item expected = expectedItem == null ? null : net.minecraft.core.registries.BuiltInRegistries.ITEM.get(expectedItem);
-        if (expected == null || !stack.is(expected)) {
+        if (!KeyService.isPhysicalKeyItem(stack)) {
             return;
         }
 
-        CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
-        if (customData == null || customData.isEmpty()) {
-            return;
-        }
-
-        CompoundTag tag = customData.copyTag();
-        if (!tag.contains(MARKER_TAG) || !tag.getBoolean(MARKER_TAG) || !tag.contains(KEY_TAG)) {
-            return;
-        }
-
-        String keyCode = tag.getString(KEY_TAG).trim();
+        String keyCode = stack.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA)
+                .copyTag()
+                .getString(KEY_TAG).trim();
         if (keyCode.isEmpty()) {
             return;
         }
@@ -134,6 +121,9 @@ public final class NeoForgeEasyVipMod {
                 break;
             case NO_USES_LEFT:
                 msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyNoUsesLeft;
+                break;
+            case ON_COOLDOWN:
+                msg = EasyVipConfig.messages.prefix + "&cAguarde um momento antes de usar outra chave.";
                 break;
             case ALREADY_USED:
                 msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyAlreadyUsed;

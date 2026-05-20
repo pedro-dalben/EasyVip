@@ -20,19 +20,33 @@
 - `variant_selection_timeout_seconds`
 - `notify_pending_variant_on_login`
 - `item_key_item_id`
+- `item_key_marker`
 - `command_allowlist_enabled`
 - `command_allowlist`
+
+### Behavior notes
+
+- `command_cooldown_ticks` applies to `/easyvip use`, `/usekey` and `/easyvip confirm` per player.
+- `allowed_dimensions` is a positive allowlist for reward/VIP use.
+- `deny_dimensions` wins over `allowed_dimensions` if both match.
+- `variant_selection_timeout_seconds` controls how long a package variant choice stays pending.
+- `notify_pending_variant_on_login` only toggles the login reminder; expiration cleanup still runs.
+- `item_key_marker` is required on the physical item payload so a generic item with NBT is not accepted.
 
 ### `packages.toml`
 
 - `repeatable`
 - `cooldown_seconds`
 
+These are implemented and enforced during package delivery.
+
 ### `reward_keys.toml`
 
 - `consume_on_use`
 - `cooldown_seconds`
 - `allowed_dimensions`
+
+These are implemented and enforced during reward key redemption.
 
 ### `integrations.toml`
 
@@ -43,6 +57,8 @@
 - `ftb_ranks_remove_command`
 - `ftb_ranks_set_command`
 
+The FTB Ranks actions are command-template driven and still pass through the command allowlist.
+
 ## Reserved
 
 - `sql_enabled`
@@ -51,4 +67,3 @@
 - `sql_password`
 
 These fields are kept for future work but do not enable SQL storage in the current release.
-

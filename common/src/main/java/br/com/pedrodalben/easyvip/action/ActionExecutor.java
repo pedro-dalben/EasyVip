@@ -30,17 +30,22 @@ public final class ActionExecutor {
     }
 
     public static boolean execute(ServerPlayer player, List<Map<String, Object>> actions, Map<String, String> context) {
+        return execute(ActionContext.online(player, "server_player"), actions, context);
+    }
+
+    public static boolean execute(ActionContext actionContext, List<Map<String, Object>> actions, Map<String, String> context) {
         if (actions == null || actions.isEmpty()) {
             return true;
         }
 
         Map<String, String> fullContext = new HashMap<>(context);
-        fullContext.put("player", player.getGameProfile().getName());
+        fullContext.put("player", actionContext.getPlayerName());
+        fullContext.put("player_uuid", actionContext.getPlayerUuid().toString());
 
         boolean allOk = true;
         for (Map<String, Object> action : actions) {
             try {
-                if (!executeSingle(player, action, fullContext)) {
+                if (!executeSingle(actionContext, action, fullContext)) {
                     allOk = false;
                 }
             } catch (Exception e) {
@@ -54,12 +59,18 @@ public final class ActionExecutor {
         return allOk;
     }
 
-    private static boolean executeSingle(ServerPlayer player, Map<String, Object> action, Map<String, String> context) {
+    private static boolean executeSingle(ActionContext ctx, Map<String, Object> action, Map<String, String> context) {
         String type = getString(action, "type", "");
         if (type.isEmpty()) return false;
 
+        ServerPlayer player = ctx.getOnlinePlayer();
+        MinecraftServer server = ctx.getServer();
+
         switch (type.toLowerCase()) {
             case "give_item": {
+                if (player == null) {
+                    return false;
+                }
                 String itemStr = getString(action, "item", "");
                 int amount = getInt(action, "amount", 1);
                 if (!itemStr.isEmpty()) {
@@ -76,6 +87,9 @@ public final class ActionExecutor {
                 break;
             }
             case "give_experience": {
+                if (player == null) {
+                    return false;
+                }
                 int amount = getInt(action, "amount", 0);
                 if (amount > 0) {
                     player.giveExperiencePoints(amount);
@@ -84,6 +98,9 @@ public final class ActionExecutor {
                 break;
             }
             case "give_level": {
+                if (player == null) {
+                    return false;
+                }
                 int amount = getInt(action, "amount", 0);
                 if (amount > 0) {
                     player.giveExperienceLevels(amount);
@@ -92,6 +109,9 @@ public final class ActionExecutor {
                 break;
             }
             case "give_effect": {
+                if (player == null) {
+                    return false;
+                }
                 String effectStr = getString(action, "effect", "");
                 int durationSeconds = getInt(action, "duration", 30);
                 int amplifier = getInt(action, "amplifier", 0);
@@ -110,14 +130,15 @@ public final class ActionExecutor {
             case "send_message": {
                 String message = getString(action, "message", "");
                 if (!message.isEmpty()) {
-                    player.sendSystemMessage(Component.literal(resolvePlaceholders(message, context)));
+                    if (player != null) {
+                        player.sendSystemMessage(Component.literal(resolvePlaceholders(message, context)));
+                    }
                     return true;
                 }
                 break;
             }
             case "broadcast_message": {
                 String message = getString(action, "message", "");
-                MinecraftServer server = player.getServer();
                 if (!message.isEmpty() && server != null) {
                     server.getPlayerList().broadcastSystemMessage(
                             Component.literal(resolvePlaceholders(message, context)),
@@ -131,15 +152,17 @@ public final class ActionExecutor {
                 String command = getString(action, "command", "");
                 if (!command.isEmpty()) {
                     String cmd = resolvePlaceholders(command, context);
-                    return executeServerCommand(player, cmd);
+                    return executeServerCommand(server, cmd);
                 }
                 break;
             }
             case "run_player_command": {
+                if (player == null) {
+                    return false;
+                }
                 String command = getString(action, "command", "");
                 if (!command.isEmpty()) {
                     String cmd = resolvePlaceholders(command, context);
-                    MinecraftServer server = player.getServer();
                     if (server != null) {
                         server.getCommands().performPrefixedCommand(player.createCommandSourceStack(), cmd);
                         return true;
@@ -149,12 +172,15 @@ public final class ActionExecutor {
             }
             case "give_package": {
                 String pkgId = getString(action, "package_id", "");
-                if (!pkgId.isEmpty()) {
+                if (!pkgId.isEmpty() && player != null) {
                     return PackageService.givePackage(player, pkgId);
                 }
                 break;
             }
             case "set_scoreboard_tag": {
+                if (player == null) {
+                    return false;
+                }
                 String tag = getString(action, "tag", "");
                 if (!tag.isEmpty()) {
                     player.addTag(tag);
@@ -163,6 +189,9 @@ public final class ActionExecutor {
                 break;
             }
             case "remove_scoreboard_tag": {
+                if (player == null) {
+                    return false;
+                }
                 String tag = getString(action, "tag", "");
                 if (!tag.isEmpty()) {
                     player.removeTag(tag);
@@ -171,8 +200,10 @@ public final class ActionExecutor {
                 break;
             }
             case "add_to_team": {
+                if (player == null) {
+                    return false;
+                }
                 String teamName = getString(action, "team", "");
-                MinecraftServer server = player.getServer();
                 if (!teamName.isEmpty() && server != null) {
                     var scoreboard = server.getScoreboard();
                     var team = scoreboard.getPlayerTeam(teamName);
@@ -184,8 +215,10 @@ public final class ActionExecutor {
                 break;
             }
             case "remove_from_team": {
+                if (player == null) {
+                    return false;
+                }
                 String teamName = getString(action, "team", "");
-                MinecraftServer server = player.getServer();
                 if (!teamName.isEmpty() && server != null) {
                     var scoreboard = server.getScoreboard();
                     var team = scoreboard.getPlayerTeam(teamName);
@@ -197,6 +230,9 @@ public final class ActionExecutor {
                 break;
             }
             case "give_permission_flag_internal": {
+                if (player == null) {
+                    return false;
+                }
                 String perm = getString(action, "permission", "");
                 if (!perm.isEmpty() && platform != null) {
                     platform.setPermissionFlagInternal(player, perm, true);
@@ -205,6 +241,9 @@ public final class ActionExecutor {
                 break;
             }
             case "remove_permission_flag_internal": {
+                if (player == null) {
+                    return false;
+                }
                 String perm = getString(action, "permission", "");
                 if (!perm.isEmpty() && platform != null) {
                     platform.setPermissionFlagInternal(player, perm, false);
@@ -213,6 +252,9 @@ public final class ActionExecutor {
                 break;
             }
             case "custom_event_hook": {
+                if (player == null) {
+                    return false;
+                }
                 String hook = getString(action, "hook", "");
                 if (!hook.isEmpty() && platform != null) {
                     platform.fireCustomEventHook(player, hook, context);
@@ -224,7 +266,7 @@ public final class ActionExecutor {
                 String command = getString(action, "command", "");
                 if (!command.isEmpty()) {
                     String cmd = resolvePlaceholders(command, context);
-                    return executeServerCommand(player, cmd);
+                    return executeServerCommand(server, cmd);
                 }
                 break;
             }
@@ -232,7 +274,7 @@ public final class ActionExecutor {
                 String rank = getString(action, "rank", "");
                 if (!rank.isEmpty()) {
                     String cmd = renderFtbRankCommand(EasyVipConfig.integrations.ftbRanksAddCommand, context, rank);
-                    return executeFtbRankCommand(player, cmd);
+                    return executeFtbRankCommand(server, cmd);
                 }
                 break;
             }
@@ -240,7 +282,7 @@ public final class ActionExecutor {
                 String rank = getString(action, "rank", "");
                 if (!rank.isEmpty()) {
                     String cmd = renderFtbRankCommand(EasyVipConfig.integrations.ftbRanksRemoveCommand, context, rank);
-                    return executeFtbRankCommand(player, cmd);
+                    return executeFtbRankCommand(server, cmd);
                 }
                 break;
             }
@@ -248,7 +290,7 @@ public final class ActionExecutor {
                 String rank = getString(action, "rank", "");
                 if (!rank.isEmpty()) {
                     String cmd = renderFtbRankCommand(EasyVipConfig.integrations.ftbRanksSetCommand, context, rank);
-                    return executeFtbRankCommand(player, cmd);
+                    return executeFtbRankCommand(server, cmd);
                 }
                 break;
             }
@@ -269,28 +311,32 @@ public final class ActionExecutor {
         return CommandAllowlist.isAllowed(command, EasyVipConfig.common.commandAllowlistEnabled, EasyVipConfig.common.commandAllowlist);
     }
 
-    private static boolean executeServerCommand(ServerPlayer player, String cmd) {
-        if (cmd == null || cmd.isEmpty()) {
+    public static String sanitizeCommand(String command) {
+        return CommandAllowlist.normalize(command);
+    }
+
+    private static boolean executeServerCommand(MinecraftServer server, String cmd) {
+        String normalized = sanitizeCommand(cmd);
+        if (normalized == null) {
             return false;
         }
-        if (!isCommandAllowed(cmd)) {
-            System.err.println("[EasyVip] Command execution blocked by security allowlist: " + cmd);
+        if (!isCommandAllowed(normalized)) {
+            System.err.println("[EasyVip] Command execution blocked by security allowlist: " + normalized);
             return false;
         }
-        MinecraftServer server = player.getServer();
         if (server != null) {
-            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), cmd);
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), normalized);
             return true;
         }
         return false;
     }
 
-    private static boolean executeFtbRankCommand(ServerPlayer player, String cmd) {
+    private static boolean executeFtbRankCommand(MinecraftServer server, String cmd) {
         if (!PermissionBridge.isFtbRanksPresent() || !EasyVipConfig.integrations.ftbRanksEnabled) {
             System.err.println("[EasyVip] FTB Ranks action ignored because FTB Ranks is not available.");
             return false;
         }
-        return executeServerCommand(player, cmd);
+        return executeServerCommand(server, cmd);
     }
 
     private static String renderFtbRankCommand(String template, Map<String, String> context, String rank) {

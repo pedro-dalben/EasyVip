@@ -1,5 +1,6 @@
 package br.com.pedrodalben.easyvip.service;
 
+import br.com.pedrodalben.easyvip.action.ActionContext;
 import br.com.pedrodalben.easyvip.action.ActionExecutor;
 import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.*;
@@ -34,7 +35,7 @@ public final class VipService {
         long now = System.currentTimeMillis();
 
         PlayerVipRecord record = registry.getVips().get(tierId);
-        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+        ServerPlayer player = getOnlinePlayer(server, uuid);
         boolean isOnline = player != null;
         String targetName = resolvePlayerName(server, uuid);
         if (isOnline) {
@@ -55,7 +56,9 @@ public final class VipService {
             registry.getVips().put(tierId, record);
 
             if (isOnline) {
-                ActionExecutor.execute(player, tierDef.actionsOnActivate, ctx);
+                executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_activate");
+            } else {
+                executeTierActions(server, uuid, targetName, null, tierDef.actionsOnActivate, ctx, "vip_activate_offline");
             }
         } else {
             // Extension or stack check
@@ -64,9 +67,7 @@ public final class VipService {
                     long expiry = (duration == -1) ? -1 : now + duration;
                     record.setExpiryTime(expiry);
                     record.setStartTime(now);
-                    if (isOnline) {
-                        ActionExecutor.execute(player, tierDef.actionsOnActivate, ctx);
-                    }
+                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_replace");
                 } else {
                     return false; // Denied stacking
                 }
@@ -74,15 +75,11 @@ public final class VipService {
                 // Stacking allowed
                 if (record.getExpiryTime() == -1) {
                     // Already permanent
-                    if (isOnline) {
-                        ActionExecutor.execute(player, tierDef.actionsOnActivate, ctx);
-                    }
+                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_stack_perm");
                 } else if (duration == -1) {
                     // Upgrading to permanent
                     record.setExpiryTime(-1);
-                    if (isOnline) {
-                        ActionExecutor.execute(player, tierDef.actionsOnActivate, ctx);
-                    }
+                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_upgrade_perm");
                 } else {
                     // Standard duration extension
                     long currentExpiry = record.getExpiryTime();
@@ -97,9 +94,7 @@ public final class VipService {
                     }
 
                     record.setExpiryTime(newExpiry);
-                    if (isOnline) {
-                        ActionExecutor.execute(player, tierDef.actionsOnActivate, ctx);
-                    }
+                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_extend");
                 }
             }
         }
@@ -124,19 +119,30 @@ public final class VipService {
             return false;
         }
 
-        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+        ServerPlayer player = getOnlinePlayer(server, uuid);
         EasyVipConfig.VipTierDefinition tierDef = EasyVipConfig.tiers.list.get(tierId);
 
         if (player != null && tierDef != null) {
             Map<String, String> ctx = new HashMap<>();
             ctx.put("tier_id", tierId);
             ctx.put("tier_display", tierDef.displayName);
+            ctx.put("player", resolvePlayerName(server, uuid));
+            ctx.put("player_uuid", uuid.toString());
 
-            // Execute unset if it was active
             if (record.isActive()) {
-                ActionExecutor.execute(player, tierDef.actionsOnUnsetActive, ctx);
+                executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, tierDef.actionsOnUnsetActive, ctx, "vip_remove_unset_active");
+            } else {
+                executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, tierDef.actionsOnUnsetActive, ctx, "vip_remove_unset_active_offline");
             }
-            ActionExecutor.execute(player, tierDef.actionsOnRemove, ctx);
+            executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, tierDef.actionsOnRemove, ctx, "vip_remove");
+        } else if (tierDef != null) {
+            Map<String, String> ctx = new HashMap<>();
+            ctx.put("tier_id", tierId);
+            ctx.put("tier_display", tierDef.displayName);
+            ctx.put("player", resolvePlayerName(server, uuid));
+            ctx.put("player_uuid", uuid.toString());
+            executeTierActions(server, uuid, resolvePlayerName(server, uuid), null, tierDef.actionsOnUnsetActive, ctx, "vip_remove_offline_unset");
+            executeTierActions(server, uuid, resolvePlayerName(server, uuid), null, tierDef.actionsOnRemove, ctx, "vip_remove_offline");
         }
 
         registry.setPlayerName(resolvePlayerName(server, uuid));
@@ -164,33 +170,33 @@ public final class VipService {
             return false;
         }
 
-        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+        ServerPlayer player = getOnlinePlayer(server, uuid);
 
         for (PlayerVipRecord record : registry.getVips().values()) {
             if (record.isActive() && !record.getTierId().equals(tierId)) {
                 record.setActive(false);
-                if (player != null) {
-                    EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(record.getTierId());
-                    if (oldDef != null) {
-                        Map<String, String> ctx = new HashMap<>();
-                        ctx.put("tier_id", record.getTierId());
-                        ctx.put("tier_display", oldDef.displayName);
-                        ActionExecutor.execute(player, oldDef.actionsOnUnsetActive, ctx);
-                    }
+                EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(record.getTierId());
+                if (oldDef != null) {
+                    Map<String, String> ctx = new HashMap<>();
+                    ctx.put("tier_id", record.getTierId());
+                    ctx.put("tier_display", oldDef.displayName);
+                    ctx.put("player", resolvePlayerName(server, uuid));
+                    ctx.put("player_uuid", uuid.toString());
+                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_active_unset");
                 }
             }
         }
 
         if (!targetRecord.isActive()) {
             targetRecord.setActive(true);
-            if (player != null) {
-                EasyVipConfig.VipTierDefinition newDef = EasyVipConfig.tiers.list.get(tierId);
-                if (newDef != null) {
-                    Map<String, String> ctx = new HashMap<>();
-                    ctx.put("tier_id", tierId);
-                    ctx.put("tier_display", newDef.displayName);
-                    ActionExecutor.execute(player, newDef.actionsOnSetActive, ctx);
-                }
+            EasyVipConfig.VipTierDefinition newDef = EasyVipConfig.tiers.list.get(tierId);
+            if (newDef != null) {
+                Map<String, String> ctx = new HashMap<>();
+                ctx.put("tier_id", tierId);
+                ctx.put("tier_display", newDef.displayName);
+                ctx.put("player", resolvePlayerName(server, uuid));
+                ctx.put("player_uuid", uuid.toString());
+                executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, newDef.actionsOnSetActive, ctx, "vip_active_set");
             }
         }
 
@@ -205,7 +211,7 @@ public final class VipService {
             return;
         }
 
-        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
+        ServerPlayer player = getOnlinePlayer(server, uuid);
         PlayerVipRecord highestVip = null;
         int highestPriority = -1;
 
@@ -232,13 +238,15 @@ public final class VipService {
         }
 
         if (validVips.isEmpty()) {
-            if (currentActive != null && player != null) {
+            if (currentActive != null) {
                 EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(currentActive.getTierId());
                 if (oldDef != null) {
                     Map<String, String> ctx = new HashMap<>();
                     ctx.put("tier_id", currentActive.getTierId());
                     ctx.put("tier_display", oldDef.displayName);
-                    ActionExecutor.execute(player, oldDef.actionsOnUnsetActive, ctx);
+                    ctx.put("player", resolvePlayerName(server, uuid));
+                    ctx.put("player_uuid", uuid.toString());
+                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_clear_active");
                 }
             }
             return;
@@ -253,27 +261,27 @@ public final class VipService {
                 // Deactivate old active
                 if (currentActive != null) {
                     currentActive.setActive(false);
-                    if (player != null) {
-                        EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(currentActive.getTierId());
-                        if (oldDef != null) {
-                            Map<String, String> ctx = new HashMap<>();
-                            ctx.put("tier_id", currentActive.getTierId());
-                            ctx.put("tier_display", oldDef.displayName);
-                            ActionExecutor.execute(player, oldDef.actionsOnUnsetActive, ctx);
-                        }
+                    EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(currentActive.getTierId());
+                    if (oldDef != null) {
+                        Map<String, String> ctx = new HashMap<>();
+                        ctx.put("tier_id", currentActive.getTierId());
+                        ctx.put("tier_display", oldDef.displayName);
+                        ctx.put("player", resolvePlayerName(server, uuid));
+                        ctx.put("player_uuid", uuid.toString());
+                        executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_deactivate_old");
                     }
                 }
 
                 // Activate new active
                 targetActive.setActive(true);
-                if (player != null) {
-                    EasyVipConfig.VipTierDefinition newDef = EasyVipConfig.tiers.list.get(targetActive.getTierId());
-                    if (newDef != null) {
-                        Map<String, String> ctx = new HashMap<>();
-                        ctx.put("tier_id", targetActive.getTierId());
-                        ctx.put("tier_display", newDef.displayName);
-                        ActionExecutor.execute(player, newDef.actionsOnSetActive, ctx);
-                    }
+                EasyVipConfig.VipTierDefinition newDef = EasyVipConfig.tiers.list.get(targetActive.getTierId());
+                if (newDef != null) {
+                    Map<String, String> ctx = new HashMap<>();
+                    ctx.put("tier_id", targetActive.getTierId());
+                    ctx.put("tier_display", newDef.displayName);
+                    ctx.put("player", resolvePlayerName(server, uuid));
+                    ctx.put("player_uuid", uuid.toString());
+                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, newDef.actionsOnSetActive, ctx, "vip_activate_new");
                 }
             }
         }
@@ -288,13 +296,19 @@ public final class VipService {
     }
 
     public static int expireDueVipsForPlayer(MinecraftServer server, UUID uuid) {
+        return expireDueVipsForPlayer(server, uuid, resolvePlayerName(server, uuid), getOnlinePlayer(server, uuid));
+    }
+
+    static int expireDueVipsForTest(UUID uuid, String playerName) {
+        return expireDueVipsForPlayer(null, uuid, playerName, null);
+    }
+
+    private static int expireDueVipsForPlayer(MinecraftServer server, UUID uuid, String playerName, ServerPlayer player) {
         PlayerVipRegistry registry = PersistenceManager.getPlayerVips(uuid);
         if (registry == null || registry.getVips().isEmpty()) {
             return 0;
         }
 
-        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
-        String playerName = resolvePlayerName(server, uuid);
         registry.setPlayerName(playerName);
 
         boolean changed = false;
@@ -315,14 +329,16 @@ public final class VipService {
                 ctx.put("player", playerName);
                 ctx.put("player_uuid", uuid.toString());
 
-                if (player != null && tierDef != null) {
+                if (tierDef != null) {
                     if (record.isActive()) {
-                        ActionExecutor.execute(player, tierDef.actionsOnUnsetActive, ctx);
+                        executeTierActions(server, uuid, playerName, player, tierDef.actionsOnUnsetActive, ctx, "vip_expire_unset_active");
                     }
-                    ActionExecutor.execute(player, tierDef.actionsOnExpire, ctx);
-                    player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                            ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExpired, ctx)
-                    ));
+                    executeTierActions(server, uuid, playerName, player, tierDef.actionsOnExpire, ctx, "vip_expire");
+                    if (player != null) {
+                        player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExpired, ctx)
+                        ));
+                    }
                 }
 
                 PersistenceManager.log("System", "vip_expired", "VIP tier " + record.getTierId() + " expired for " + playerName);
@@ -361,8 +377,8 @@ public final class VipService {
                     ctx.put("tier_display", tierDef.displayName);
                     ctx.put("duration", "activation");
                     ctx.put("player", player.getGameProfile().getName());
-
-                    ActionExecutor.execute(player, tierDef.actionsOnActivate, ctx);
+                    ctx.put("player_uuid", uuid.toString());
+                    executeTierActions(server, uuid, player.getGameProfile().getName(), player, tierDef.actionsOnActivate, ctx, "vip_pending_activate");
                 }
                 record.setPendingActivateActions(false);
             }
@@ -383,5 +399,24 @@ public final class VipService {
             }
         }
         return uuid.toString();
+    }
+
+    private static ServerPlayer getOnlinePlayer(MinecraftServer server, UUID uuid) {
+        if (server == null || server.getPlayerList() == null) {
+            return null;
+        }
+        try {
+            return server.getPlayerList().getPlayer(uuid);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static boolean executeTierActions(MinecraftServer server, UUID uuid, String playerName, ServerPlayer onlinePlayer,
+                                              List<Map<String, Object>> actions, Map<String, String> ctx, String source) {
+        ActionContext actionContext = (onlinePlayer != null)
+                ? ActionContext.online(onlinePlayer, source)
+                : ActionContext.offline(server, uuid, playerName, source);
+        return ActionExecutor.execute(actionContext, actions, ctx);
     }
 }

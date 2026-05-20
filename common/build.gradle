@@ -15,6 +15,12 @@ neoForge {
     }
 }
 
+configurations {
+    testCompileOnly.extendsFrom compileOnly
+    testCompileClasspath.extendsFrom compileClasspath
+    testRuntimeClasspath.extendsFrom runtimeClasspath
+}
+
 repositories {
     maven {
         name = 'LuckPerms'
@@ -29,5 +35,6 @@ dependencies {
 
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.mockito:mockito-inline:5.2.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

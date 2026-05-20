@@ -18,7 +18,10 @@ public final class ExpirationService {
         if (scheduler != null) return;
 
         if (server != null && !server.isStopped()) {
-            server.execute(() -> VipService.expireAllDueVips(server));
+            server.execute(() -> {
+                VipService.expireAllDueVips(server);
+                PackageService.cleanupExpiredPendingVariants();
+            });
         }
 
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -37,6 +40,7 @@ public final class ExpirationService {
                 if (server != null && !server.isStopped()) {
                     server.execute(() -> {
                         VipService.expireAllDueVips(server);
+                        PackageService.cleanupExpiredPendingVariants();
                     });
                 }
             } catch (Exception e) {

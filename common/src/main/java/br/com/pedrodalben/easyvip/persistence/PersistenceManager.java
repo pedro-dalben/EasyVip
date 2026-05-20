@@ -61,6 +61,14 @@ public final class PersistenceManager {
         EXECUTOR.shutdown();
     }
 
+    public static void flush() {
+        try {
+            EXECUTOR.submit(() -> { }).get();
+        } catch (Exception e) {
+            throw new RuntimeException("Could not flush persistence executor", e);
+        }
+    }
+
     // ─── Load Operations ────────────────────────────────────
     private static void loadAll() {
         LOCK.writeLock().lock();

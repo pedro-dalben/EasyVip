@@ -13,6 +13,13 @@
 - `/viptime [player]`
 - `/usekey <key>`
 
+## Notes
+
+- `/easyvip use` e `/usekey` respeitam cooldown por jogador.
+- `/easyvip confirm` também respeita cooldown por jogador.
+- `/easyvip variant pending` mostra pendências válidas; pendências expiradas são limpas pelo login e pelo scheduler.
+- `/easyvip variant clear` remove pendências manualmente.
+
 ## Admin
 
 - `/easyvip admin addvip <player> <tier> <duration>`
@@ -28,4 +35,3 @@
 - `/easyvip package list`
 - `/easyvip package info <id>`
 - `/easyvip active set <player> <tier>`
-

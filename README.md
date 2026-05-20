@@ -73,7 +73,8 @@ Compilar só o Java do módulo NeoForge:
 4. Se `confirm_before_use = true`, o mod exige `/easyvip confirm`.
 5. Ao confirmar, a chave aplica VIP ou recompensa.
 6. VIPs e pendências são persistidos em JSON.
-7. Um scheduler processa expiração de VIPs periodicamente.
+7. Um scheduler processa expiração de VIPs e limpeza de pendências periodicamente.
+8. VIPs expirados também são limpos no login e na inicialização do servidor.
 
 ### Chave física
 
@@ -86,6 +87,8 @@ O `ItemStack` precisa conter:
 
 - `easyvip_item_key = true`
 - `easyvip_key = <codigo>`
+
+O marcador é configurável em `common.toml` via `item_key_marker`.
 
 Isso evita aceitar qualquer item genérico com NBT solto.
 
@@ -113,6 +116,7 @@ Exemplo:
 #### `/easyvip confirm`
 
 Confirma a ativação de uma chave quando o modo de confirmação está habilitado.
+O comando também respeita `command_cooldown_ticks`.
 
 #### `/easyvip info [player]`
 
@@ -128,10 +132,11 @@ Seleciona o VIP ativo do jogador, quando a troca manual estiver permitida.
 #### `/easyvip variant choose <package> <variant>`
 
 Escolhe uma variante pendente de pacote.
+Se a pendência expirou, o mod remove a seleção e retorna erro amigável.
 
 #### `/easyvip variant pending [player]`
 
-Lista pendências de variante.
+Lista pendências válidas de variante.
 
 #### `/easyvip variant clear <player> [package_id]`
 
@@ -263,10 +268,20 @@ Configurações gerais:
 - `variant_selection_timeout_seconds`
 - `notify_pending_variant_on_login`
 - `item_key_item_id`
+- `item_key_marker`
 - `log_to_file`
 - `debug`
 - `command_allowlist_enabled`
 - `command_allowlist`
+
+Notas importantes:
+
+- `command_cooldown_ticks` aplica cooldown por jogador em `/easyvip use`, `/usekey` e `/easyvip confirm`
+- `allowed_dimensions` permite apenas as dimensões listadas
+- `deny_dimensions` bloqueia as dimensões listadas e tem prioridade sobre `allowed_dimensions`
+- `variant_selection_timeout_seconds` controla por quanto tempo a escolha de variante fica pendente
+- `notify_pending_variant_on_login` só controla o aviso no login; a limpeza de expiradas continua ativa
+- `item_key_marker` precisa bater com o marcador gravado no item físico
 
 ### `messages.toml`
 
@@ -296,6 +311,8 @@ Define pacotes de recompensa e suas variantes.
 - `repeatable`
 - `cooldown_seconds`
 
+Essas opções são aplicadas na entrega do pacote.
+
 ### `reward_keys.toml`
 
 Define recompensas não-VIP geradas por chave.
@@ -303,6 +320,8 @@ Define recompensas não-VIP geradas por chave.
 - `consume_on_use`
 - `cooldown_seconds`
 - `allowed_dimensions`
+
+Essas opções são aplicadas na ativação da reward key.
 
 ### `integrations.toml`
 
@@ -318,6 +337,8 @@ Integrações opcionais:
 - `sql_url`
 - `sql_username`
 - `sql_password`
+
+O fluxo FTB Ranks usa templates de comando e passa pela allowlist de comandos do mod.
 
 ## Integração FTB Ranks
 
@@ -344,6 +365,9 @@ As templates padrão ficam em `integrations.toml` e geram comandos como:
 - `ftbranks add {player} {rank}`
 - `ftbranks remove {player} {rank}`
 - `ftbranks set {player} {rank}`
+
+As actions `run_server_command` e `run_ftb_rank_command` podem executar mesmo com o jogador offline, desde que o nome do jogador esteja salvo.
+Actions que exigem inventário ou interação direta continuam dependendo de um jogador online.
 
 ## Dados persistidos
 
@@ -393,7 +417,8 @@ O executor de ações suporta os seguintes tipos:
 
 ## Segurança
 
-- `run_server_command` usa allowlist configurável
+- `run_server_command` e os comandos de FTB Ranks usam allowlist configurável
+- A allowlist normaliza espaços, rejeita encadeamento com `;`, `&&` e `||` e compara sem diferenciar maiúsculas/minúsculas
 - LuckPerms e FTB Ranks são `compileOnly`
 - A integração é detectada em runtime com fallback seguro
 - A persistência usa escrita atômica com `.tmp` e `.bak`
@@ -407,7 +432,7 @@ Se habilitado em `integrations.toml`, o mod pode consultar permissões via LuckP
 
 ### FTB Ranks
 
-Se habilitado, o mod consulta permissões via FTB Ranks.
+Se habilitado, o mod consulta permissões via FTB Ranks e pode aplicar/remover ranks por comando seguro.
 
 ### Fallback vanilla
 

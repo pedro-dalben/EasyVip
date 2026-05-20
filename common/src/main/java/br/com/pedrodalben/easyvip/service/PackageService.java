@@ -8,6 +8,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 public final class PackageService {
 
@@ -16,24 +17,34 @@ public final class PackageService {
 
     public static int cleanupExpiredPendingVariants() {
         int removed = 0;
-        int timeout = EasyVipConfig.common.variantSelectionTimeoutSeconds;
         for (Map.Entry<UUID, List<PendingVariantSelection>> entry : PersistenceManager.getAllPendingVariants().entrySet()) {
-            UUID uuid = entry.getKey();
-            for (PendingVariantSelection selection : new ArrayList<>(entry.getValue())) {
-                if (selection.isExpired(timeout)) {
-                    PersistenceManager.removePendingVariant(uuid, selection.getPackageId());
-                    removed++;
-                }
+            removed += cleanupExpiredPendingVariants(entry.getKey());
+        }
+        return removed;
+    }
+
+    public static int cleanupExpiredPendingVariants(UUID uuid) {
+        int removed = 0;
+        int timeout = EasyVipConfig.common.variantSelectionTimeoutSeconds;
+        for (PendingVariantSelection selection : new ArrayList<>(PersistenceManager.getPendingVariants(uuid))) {
+            if (selection.isExpired(timeout)) {
+                PersistenceManager.removePendingVariant(uuid, selection.getPackageId());
+                removed++;
             }
         }
         return removed;
     }
 
     public static void notifyPendingVariantsOnLogin(ServerPlayer player) {
+        notifyPendingVariantsOnLogin(player.getUUID(), player.getGameProfile().getName(), player::sendSystemMessage);
+    }
+
+    static void notifyPendingVariantsOnLogin(UUID uuid, String playerName, Consumer<Component> messageSink) {
+        cleanupExpiredPendingVariants(uuid);
         if (!EasyVipConfig.common.notifyPendingVariantOnLogin) {
             return;
         }
-        List<PendingVariantSelection> pendingList = PersistenceManager.getPendingVariants(player.getUUID());
+        List<PendingVariantSelection> pendingList = PersistenceManager.getPendingVariants(uuid);
         if (pendingList.isEmpty()) {
             return;
         }
@@ -44,7 +55,7 @@ public final class PackageService {
                 Map<String, String> ctx = new HashMap<>();
                 ctx.put("package", pkgDisplay);
                 ctx.put("package_id", selection.getPackageId());
-                player.sendSystemMessage(Component.literal(
+                messageSink.accept(Component.literal(
                         ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.variantPending, ctx)
                 ));
             }
@@ -113,7 +124,6 @@ public final class PackageService {
 
     public static boolean chooseVariant(ServerPlayer player, String packageId, String variantName) {
         UUID uuid = player.getUUID();
-        cleanupExpiredPendingVariants();
         List<PendingVariantSelection> pendingList = PersistenceManager.getPendingVariants(uuid);
         PendingVariantSelection match = null;
 
@@ -127,6 +137,14 @@ public final class PackageService {
         if (match == null) {
             player.sendSystemMessage(Component.literal(
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.packageNotFound, new HashMap<>())
+            ));
+            return false;
+        }
+
+        if (match.isExpired(EasyVipConfig.common.variantSelectionTimeoutSeconds)) {
+            PersistenceManager.removePendingVariant(uuid, packageId);
+            player.sendSystemMessage(Component.literal(
+                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cEsta escolha de variante expirou.", new HashMap<>())
             ));
             return false;
         }
@@ -166,7 +184,7 @@ public final class PackageService {
                 ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.variantSelected, ctx)
         ));
 
-        PersistenceManager.log(player.getGameProfile().getName(), "choose_variant", 
+        PersistenceManager.log(player.getGameProfile().getName(), "choose_variant",
                 "Selected variant " + variantName + " for package " + packageId);
 
         return true;

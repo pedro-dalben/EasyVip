@@ -35,6 +35,7 @@ subprojects {
 
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
+        jvmArgs '-Dnet.bytebuddy.experimental=true'
     }
 }
 

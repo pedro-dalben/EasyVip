@@ -256,6 +256,9 @@ public final class EasyVipCommands {
             case NO_USES_LEFT:
                 msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyNoUsesLeft;
                 break;
+            case ON_COOLDOWN:
+                msg = EasyVipConfig.messages.prefix + "&cAguarde um momento antes de usar outra chave.";
+                break;
             case ALREADY_USED:
                 msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyAlreadyUsed;
                 break;
@@ -412,6 +415,7 @@ public final class EasyVipCommands {
         }
 
         GameProfile profile = profiles.iterator().next();
+        PackageService.cleanupExpiredPendingVariants(profile.getId());
         List<PendingVariantSelection> pending = PersistenceManager.getPendingVariants(profile.getId());
         if (pending.isEmpty()) {
             src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7Sem variantes pendentes para " + profile.getName()), false);
