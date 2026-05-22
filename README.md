@@ -170,6 +170,11 @@ Exemplo:
 
 Remove um tier VIP do jogador.
 
+#### `/easyvip admin savevipactivation <tier>`
+
+Salva o inventário atual do jogador online no `actions_on_activate` do tier informado.
+O comando preserva outras ações de ativação já existentes e substitui apenas as ações antigas de entrega de itens.
+
 #### `/easyvip admin generate vip <tier> <duration> [max_uses] [bound_player]`
 
 Gera uma chave VIP.
@@ -312,6 +317,8 @@ Define os tiers VIP:
 - `actions_on_set_active`
 - `actions_on_unset_active`
 
+Você pode criar quantos tiers quiser, por exemplo `vip_esmeralda`, `vip_diamante` e `vip_ouro`.
+
 ### `packages.toml`
 
 Define pacotes de recompensa e suas variantes.
@@ -407,6 +414,7 @@ Arquivos gerados:
 O executor de ações suporta os seguintes tipos:
 
 - `give_item`
+- `give_item_stack`
 - `give_experience`
 - `give_level`
 - `give_effect`

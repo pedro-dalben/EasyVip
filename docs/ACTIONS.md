@@ -3,6 +3,7 @@
 ## Common actions
 
 - `give_item`
+- `give_item_stack`
 - `give_experience`
 - `give_level`
 - `give_effect`

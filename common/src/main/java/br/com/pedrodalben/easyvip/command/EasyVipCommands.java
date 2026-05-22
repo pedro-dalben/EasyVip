@@ -16,9 +16,13 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.GameProfileArgument;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -195,6 +199,11 @@ public final class EasyVipCommands {
                                 .executes(EasyVipCommands::executeActiveSet))));
         root.then(active);
 
+        // /easyvip admin savevipactivation <tier>
+        admin.then(Commands.literal("savevipactivation")
+                .then(Commands.argument("tier", StringArgumentType.word())
+                        .executes(EasyVipCommands::executeSaveVipActivation)));
+
         // /easyvip time [player]
         root.then(Commands.literal("time")
                 .executes(ctx -> executeInfo(ctx, null))
@@ -224,6 +233,7 @@ public final class EasyVipCommands {
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip key ... §8- §7" + EasyVipConfig.localized("manage keys", "gerenciar chaves")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip package ... §8- §7" + EasyVipConfig.localized("manage packages", "gerenciar pacotes")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip active set <player> <tier> §8- §7" + EasyVipConfig.localized("change active VIP", "alterar VIP ativo")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin savevipactivation <tier> §8- §7" + EasyVipConfig.localized("save the current inventory as VIP activation items", "salvar o inventário atual como itens de ativação do VIP")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip config reload|validate §8- §7" + EasyVipConfig.localized("reload or validate config", "recarregar/validar config")), false);
         }
 
@@ -498,6 +508,85 @@ public final class EasyVipCommands {
         }
         src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Could not change the active VIP.", "Não foi possível alterar o VIP ativo.")));
         return 0;
+    }
+
+    private static int executeSaveVipActivation(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        if (!(src.getEntity() instanceof ServerPlayer player)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.playerOnly));
+            return 0;
+        }
+
+        String tierId = StringArgumentType.getString(ctx, "tier");
+        EasyVipConfig.VipTierDefinition tier = EasyVipConfig.tiers.list.get(tierId);
+        if (tier == null) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.messages.invalidTier));
+            return 0;
+        }
+
+        List<Map<String, Object>> actions = captureVipActivationActions(player);
+        if (actions.isEmpty()) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Your inventory is empty.", "Seu inventário está vazio.")));
+            return 0;
+        }
+
+        List<Map<String, Object>> updatedActions = new ArrayList<>();
+        for (Map<String, Object> action : tier.actionsOnActivate) {
+            Object typeObj = action.get("type");
+            String type = typeObj != null ? typeObj.toString() : "";
+            if (!type.equalsIgnoreCase("give_item") && !type.equalsIgnoreCase("give_item_stack")) {
+                updatedActions.add(new LinkedHashMap<>(action));
+            }
+        }
+        updatedActions.addAll(actions);
+        tier.actionsOnActivate = updatedActions;
+
+        try {
+            EasyVipConfig.saveTiers();
+        } catch (IOException e) {
+            Map<String, String> context = new HashMap<>();
+            context.put("error", e.getMessage() != null ? e.getMessage() : "unknown");
+            src.sendFailure(Component.literal(
+                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.reloadError, context)
+            ));
+            return 0;
+        }
+
+        Map<String, String> context = new HashMap<>();
+        context.put("tier_display", tier.displayName != null ? tier.displayName : tier.id);
+        context.put("items", String.valueOf(actions.size()));
+        src.sendSuccess(() -> Component.literal(
+                ActionExecutor.resolvePlaceholders(
+                        EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "Saved {items} item(s) from your inventory into VIP {tier_display}.",
+                                "Salvei {items} item(ns) do seu inventário no VIP {tier_display}."
+                        ),
+                        context
+                )
+        ), true);
+        return 1;
+    }
+
+    private static List<Map<String, Object>> captureVipActivationActions(ServerPlayer player) {
+        List<Map<String, Object>> actions = new ArrayList<>();
+        captureStacks(player, actions, player.getInventory().items);
+        captureStacks(player, actions, player.getInventory().armor);
+        captureStacks(player, actions, player.getInventory().offhand);
+        return actions;
+    }
+
+    private static void captureStacks(ServerPlayer player, List<Map<String, Object>> actions, List<ItemStack> stacks) {
+        for (ItemStack stack : stacks) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+
+            CompoundTag tag = (CompoundTag) stack.copy().save(player.getServer().registryAccess());
+            Map<String, Object> action = new LinkedHashMap<>();
+            action.put("type", "give_item_stack");
+            action.put("stack_snbt", NbtUtils.structureToSnbt(tag));
+            actions.add(action);
+        }
     }
 
     // ─── Admin Executions ───────────────────────────────────

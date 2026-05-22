@@ -7,6 +7,8 @@ import br.com.pedrodalben.easyvip.service.PackageService;
 import br.com.pedrodalben.easyvip.util.CommandAllowlist;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
@@ -81,6 +83,27 @@ public final class ActionExecutor {
                             ItemStack stack = new ItemStack(item, amount);
                             player.getInventory().add(stack);
                             return true;
+                        }
+                    }
+                }
+                break;
+            }
+            case "give_item_stack": {
+                if (player == null || server == null) {
+                    return false;
+                }
+                String stackSnbt = getString(action, "stack_snbt", getString(action, "stack", ""));
+                if (!stackSnbt.isEmpty()) {
+                    try {
+                        CompoundTag tag = NbtUtils.snbtToStructure(stackSnbt);
+                        ItemStack stack = ItemStack.parseOptional(server.registryAccess(), tag);
+                        if (!stack.isEmpty()) {
+                            player.getInventory().add(stack);
+                            return true;
+                        }
+                    } catch (Exception e) {
+                        if (EasyVipConfig.common.debug) {
+                            e.printStackTrace();
                         }
                     }
                 }

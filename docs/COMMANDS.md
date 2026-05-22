@@ -24,6 +24,7 @@
 
 - `/easyvip admin addvip <player> <tier> <duration>`
 - `/easyvip admin removevip <player> <tier>`
+- `/easyvip admin savevipactivation <tier>`
 - `/easyvip admin generate vip <tier> <duration> [max_uses] [bound_player]`
 - `/easyvip admin generate reward <reward_key_id> [max_uses] [bound_player]`
 - `/easyvip admin givepackage <player> <package_id>`

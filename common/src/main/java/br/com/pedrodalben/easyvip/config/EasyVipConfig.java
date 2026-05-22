@@ -251,11 +251,52 @@ public final class EasyVipConfig {
         String language = normalizeLanguage(common.language);
         Path file = configDir.resolve("tiers.toml");
         if (!Files.exists(file)) {
-            // Write defaults
-            Map<String, Object> map = new LinkedHashMap<>();
-            Map<String, Object> tiersMap = new LinkedHashMap<>();
-            map.put("tiers", tiersMap);
+            TomlWriter.writeFile(file, buildTiersToml(language));
+        }
 
+        Map<String, Object> parsed = TomlParser.parseFile(file);
+        tiers.list.clear();
+        Object tiersObj = parsed.get("tiers");
+        if (tiersObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> tiersMap = (Map<String, Object>) tiersObj;
+            for (Map.Entry<String, Object> entry : tiersMap.entrySet()) {
+                if (entry.getValue() instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> tierData = (Map<String, Object>) entry.getValue();
+                    VipTierDefinition def = new VipTierDefinition();
+                    def.id = entry.getKey();
+                    def.displayName = getString(tierData, "display_name", def.id);
+                    def.description = getString(tierData, "description", "");
+                    def.priority = getInt(tierData, "priority", 0);
+                    def.defaultDuration = getString(tierData, "default_duration", "30d");
+                    def.allowStacking = getBoolean(tierData, "allow_stacking", true);
+                    def.activationMode = getString(tierData, "activation_mode", "extend");
+                    def.maxStackDurationSeconds = getLong(tierData, "max_stack_duration_seconds", 0);
+                    def.color = getString(tierData, "color", "white");
+                    def.actionsOnActivate = getActionList(tierData, "actions_on_activate");
+                    def.actionsOnExpire = getActionList(tierData, "actions_on_expire");
+                    def.actionsOnRemove = getActionList(tierData, "actions_on_remove");
+                    def.actionsOnSetActive = getActionList(tierData, "actions_on_set_active");
+                    def.actionsOnUnsetActive = getActionList(tierData, "actions_on_unset_active");
+
+                    tiers.list.put(def.id, def);
+                }
+            }
+        }
+    }
+
+    public static synchronized void saveTiers() throws IOException {
+        Files.createDirectories(configDir);
+        TomlWriter.writeFile(configDir.resolve("tiers.toml"), buildTiersToml(common.language));
+    }
+
+    private static Map<String, Object> buildTiersToml(String language) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        Map<String, Object> tiersMap = new LinkedHashMap<>();
+        map.put("tiers", tiersMap);
+
+        if (tiers.list.isEmpty()) {
             // Default VIP
             Map<String, Object> vip = new LinkedHashMap<>();
             vip.put("display_name", localized(language, "VIP", "VIP"));
@@ -301,40 +342,28 @@ public final class EasyVipConfig {
             vipPlus.put("activation_mode", "extend");
             vipPlus.put("color", "aqua");
             tiersMap.put("vip_plus", vipPlus);
-
-            TomlWriter.writeFile(file, map);
+            return map;
         }
 
-        Map<String, Object> parsed = TomlParser.parseFile(file);
-        tiers.list.clear();
-        Object tiersObj = parsed.get("tiers");
-        if (tiersObj instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> tiersMap = (Map<String, Object>) tiersObj;
-            for (Map.Entry<String, Object> entry : tiersMap.entrySet()) {
-                if (entry.getValue() instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> tierData = (Map<String, Object>) entry.getValue();
-                    VipTierDefinition def = new VipTierDefinition();
-                    def.id = entry.getKey();
-                    def.displayName = getString(tierData, "display_name", def.id);
-                    def.description = getString(tierData, "description", "");
-                    def.priority = getInt(tierData, "priority", 0);
-                    def.defaultDuration = getString(tierData, "default_duration", "30d");
-                    def.allowStacking = getBoolean(tierData, "allow_stacking", true);
-                    def.activationMode = getString(tierData, "activation_mode", "extend");
-                    def.maxStackDurationSeconds = getLong(tierData, "max_stack_duration_seconds", 0);
-                    def.color = getString(tierData, "color", "white");
-                    def.actionsOnActivate = getActionList(tierData, "actions_on_activate");
-                    def.actionsOnExpire = getActionList(tierData, "actions_on_expire");
-                    def.actionsOnRemove = getActionList(tierData, "actions_on_remove");
-                    def.actionsOnSetActive = getActionList(tierData, "actions_on_set_active");
-                    def.actionsOnUnsetActive = getActionList(tierData, "actions_on_unset_active");
-
-                    tiers.list.put(def.id, def);
-                }
-            }
+        for (VipTierDefinition def : tiers.list.values()) {
+            Map<String, Object> tier = new LinkedHashMap<>();
+            tier.put("display_name", def.displayName);
+            tier.put("description", def.description);
+            tier.put("priority", def.priority);
+            tier.put("default_duration", def.defaultDuration);
+            tier.put("allow_stacking", def.allowStacking);
+            tier.put("activation_mode", def.activationMode);
+            tier.put("max_stack_duration_seconds", def.maxStackDurationSeconds);
+            tier.put("color", def.color);
+            tier.put("actions_on_activate", new ArrayList<>(def.actionsOnActivate));
+            tier.put("actions_on_expire", new ArrayList<>(def.actionsOnExpire));
+            tier.put("actions_on_remove", new ArrayList<>(def.actionsOnRemove));
+            tier.put("actions_on_set_active", new ArrayList<>(def.actionsOnSetActive));
+            tier.put("actions_on_unset_active", new ArrayList<>(def.actionsOnUnsetActive));
+            tiersMap.put(def.id, tier);
         }
+
+        return map;
     }
 
     // ─── Packages Config ────────────────────────────────────
