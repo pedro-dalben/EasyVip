@@ -4,6 +4,7 @@
 
 ### `common.toml`
 
+- `language`
 - `key_length`
 - `key_prefix`
 - `key_charset`
@@ -32,6 +33,13 @@
 - `variant_selection_timeout_seconds` controls how long a package variant choice stays pending.
 - `notify_pending_variant_on_login` only toggles the login reminder; expiration cleanup still runs.
 - `item_key_marker` is required on the physical item payload so a generic item with NBT is not accepted.
+
+### Language
+
+- Supported values: `en-us`, `pt-br`
+- Default: `en-us`
+- The selected language is used as the base for generated `messages.toml`, `tiers.toml`, `packages.toml` and `reward_keys.toml`
+- Existing generated TOML files are preserved; delete them if you want to regenerate the defaults in another language
 
 ### `packages.toml`
 

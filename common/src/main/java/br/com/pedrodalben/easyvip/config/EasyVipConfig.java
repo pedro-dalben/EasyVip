@@ -36,6 +36,7 @@ public final class EasyVipConfig {
 
     // ─── Common Config ──────────────────────────────────────
     public static class CommonConfig {
+        public String language = "en-us";
         public int keyLength = 12;
         public String keyPrefix = "EVIP-";
         public String keyCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -63,6 +64,7 @@ public final class EasyVipConfig {
         Path file = configDir.resolve("common.toml");
         if (!Files.exists(file)) {
             Map<String, Object> map = new LinkedHashMap<>();
+            map.put("language", common.language);
             map.put("key_length", common.keyLength);
             map.put("key_prefix", common.keyPrefix);
             map.put("key_charset", common.keyCharset);
@@ -88,6 +90,7 @@ public final class EasyVipConfig {
         }
 
         Map<String, Object> data = TomlParser.parseFile(file);
+        common.language = getString(data, "language", "en-us");
         common.keyLength = getInt(data, "key_length", 12);
         common.keyPrefix = getString(data, "key_prefix", "EVIP-");
         common.keyCharset = getString(data, "key_charset", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
@@ -148,6 +151,7 @@ public final class EasyVipConfig {
     }
 
     private static void loadMessages() throws IllegalArgumentException, IOException {
+        applyMessageDefaults(normalizeLanguage(common.language));
         Path file = configDir.resolve("messages.toml");
         if (!Files.exists(file)) {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -244,6 +248,7 @@ public final class EasyVipConfig {
     }
 
     private static void loadTiers() throws IllegalArgumentException, IOException {
+        String language = normalizeLanguage(common.language);
         Path file = configDir.resolve("tiers.toml");
         if (!Files.exists(file)) {
             // Write defaults
@@ -253,7 +258,7 @@ public final class EasyVipConfig {
 
             // Default VIP
             Map<String, Object> vip = new LinkedHashMap<>();
-            vip.put("display_name", "VIP");
+            vip.put("display_name", localized(language, "VIP", "VIP"));
             vip.put("priority", 10);
             vip.put("default_duration", "30d");
             vip.put("allow_stacking", true);
@@ -263,7 +268,9 @@ public final class EasyVipConfig {
             List<Map<String, Object>> actActivate = new ArrayList<>();
             Map<String, Object> msgAct = new LinkedHashMap<>();
             msgAct.put("type", "send_message");
-            msgAct.put("message", "&aVocê ativou o VIP {tier_display} por {duration}.");
+            msgAct.put("message", localized(language,
+                    "&aYou activated VIP {tier_display} for {duration}.",
+                    "&aVocê ativou o VIP {tier_display} por {duration}."));
             actActivate.add(msgAct);
 
             Map<String, Object> itemAct = new LinkedHashMap<>();
@@ -277,7 +284,9 @@ public final class EasyVipConfig {
             List<Map<String, Object>> actExpire = new ArrayList<>();
             Map<String, Object> msgExp = new LinkedHashMap<>();
             msgExp.put("type", "send_message");
-            msgExp.put("message", "&cSeu VIP {tier_display} expirou.");
+            msgExp.put("message", localized(language,
+                    "&cYour VIP {tier_display} expired.",
+                    "&cSeu VIP {tier_display} expirou."));
             actExpire.add(msgExp);
             vip.put("actions_on_expire", actExpire);
 
@@ -285,7 +294,7 @@ public final class EasyVipConfig {
 
             // Default VIP+
             Map<String, Object> vipPlus = new LinkedHashMap<>();
-            vipPlus.put("display_name", "VIP+");
+            vipPlus.put("display_name", localized(language, "VIP+", "VIP+"));
             vipPlus.put("priority", 20);
             vipPlus.put("default_duration", "30d");
             vipPlus.put("allow_stacking", true);
@@ -344,6 +353,7 @@ public final class EasyVipConfig {
     }
 
     private static void loadPackages() throws IllegalArgumentException, IOException {
+        String language = normalizeLanguage(common.language);
         Path file = configDir.resolve("packages.toml");
         if (!Files.exists(file)) {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -352,15 +362,19 @@ public final class EasyVipConfig {
 
             // Default Package kit_inicial
             Map<String, Object> kit = new LinkedHashMap<>();
-            kit.put("display_name", "Kit Inicial");
-            kit.put("description", "Escolha uma variante para receber seus itens.");
+            kit.put("display_name", localized(language, "Starter Kit", "Kit Inicial"));
+            kit.put("description", localized(language,
+                    "Choose a variant to receive your items.",
+                    "Escolha uma variante para receber seus itens."));
             kit.put("repeatable", true);
             kit.put("cooldown_seconds", 3600);
 
             List<Map<String, Object>> baseActions = new ArrayList<>();
             Map<String, Object> baseMsg = new LinkedHashMap<>();
             baseMsg.put("type", "send_message");
-            baseMsg.put("message", "&aVocê resgatou o Kit Inicial!");
+            baseMsg.put("message", localized(language,
+                    "&aYou redeemed the Starter Kit!",
+                    "&aVocê resgatou o Kit Inicial!"));
             baseActions.add(baseMsg);
             kit.put("actions", baseActions);
 
@@ -372,7 +386,7 @@ public final class EasyVipConfig {
             warItem.put("item", "minecraft:iron_sword");
             warItem.put("amount", 1);
             warActions.add(warItem);
-            variantsMap.put("guerreiro", warActions);
+            variantsMap.put(localized(language, "warrior", "guerreiro"), warActions);
 
             List<Map<String, Object>> arcActions = new ArrayList<>();
             Map<String, Object> arcItem = new LinkedHashMap<>();
@@ -380,7 +394,7 @@ public final class EasyVipConfig {
             arcItem.put("item", "minecraft:bow");
             arcItem.put("amount", 1);
             arcActions.add(arcItem);
-            variantsMap.put("arqueiro", arcActions);
+            variantsMap.put(localized(language, "archer", "arqueiro"), arcActions);
 
             kit.put("variants", variantsMap);
             packagesMap.put("kit_inicial", kit);
@@ -439,6 +453,7 @@ public final class EasyVipConfig {
     }
 
     private static void loadRewardKeys() throws IllegalArgumentException, IOException {
+        String language = normalizeLanguage(common.language);
         Path file = configDir.resolve("reward_keys.toml");
         if (!Files.exists(file)) {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -446,7 +461,7 @@ public final class EasyVipConfig {
             map.put("reward_keys", keysMap);
 
             Map<String, Object> coins = new LinkedHashMap<>();
-            coins.put("display_name", "Chave de Moedas");
+            coins.put("display_name", localized(language, "Coins Key", "Chave de Moedas"));
             coins.put("consume_on_use", true);
             coins.put("cooldown_seconds", 0);
 
@@ -531,36 +546,166 @@ public final class EasyVipConfig {
 
     public static List<String> validate() {
         List<String> errors = new ArrayList<>();
+        if (!normalizeLanguage(common.language).equals("en-us") && !normalizeLanguage(common.language).equals("pt-br")) {
+            errors.add(localized(
+                    "common.toml: language must be en-us or pt-br.",
+                    "common.toml: language deve ser en-us ou pt-br."
+            ));
+        }
         if (common.keyLength < 4) {
-            errors.add("common.toml: key_length deve ser no mínimo 4.");
+            errors.add(localized(
+                    "common.toml: key_length must be at least 4.",
+                    "common.toml: key_length deve ser no mínimo 4."
+            ));
         }
         if (!common.defaultActivationMode.equals("extend") && !common.defaultActivationMode.equals("replace") &&
             !common.defaultActivationMode.equals("stack") && !common.defaultActivationMode.equals("deny")) {
-            errors.add("common.toml: default_activation_mode inválido: " + common.defaultActivationMode);
+            errors.add(localized(
+                    "common.toml: invalid default_activation_mode: " + common.defaultActivationMode,
+                    "common.toml: default_activation_mode inválido: " + common.defaultActivationMode
+            ));
         }
         for (VipTierDefinition tier : tiers.list.values()) {
             if (tier.id == null || tier.id.trim().isEmpty()) {
-                errors.add("tiers.toml: ID do tier não pode ser vazio.");
+                errors.add(localized(
+                        "tiers.toml: tier ID cannot be empty.",
+                        "tiers.toml: ID do tier não pode ser vazio."
+                ));
             }
             if (tier.priority < 0) {
-                errors.add("tiers.toml: priority do tier " + tier.id + " não pode ser negativa.");
+                errors.add(localized(
+                        "tiers.toml: tier " + tier.id + " priority cannot be negative.",
+                        "tiers.toml: priority do tier " + tier.id + " não pode ser negativa."
+                ));
             }
             if (!tier.activationMode.equals("extend") && !tier.activationMode.equals("replace") &&
                 !tier.activationMode.equals("stack") && !tier.activationMode.equals("deny")) {
-                errors.add("tiers.toml: activation_mode inválido para o tier " + tier.id + ": " + tier.activationMode);
+                errors.add(localized(
+                        "tiers.toml: invalid activation_mode for tier " + tier.id + ": " + tier.activationMode,
+                        "tiers.toml: activation_mode inválido para o tier " + tier.id + ": " + tier.activationMode
+                ));
             }
         }
         for (PackageDefinition pkg : packages.list.values()) {
             if (pkg.id == null || pkg.id.trim().isEmpty()) {
-                errors.add("packages.toml: ID do pacote não pode ser vazio.");
+                errors.add(localized(
+                        "packages.toml: package ID cannot be empty.",
+                        "packages.toml: ID do pacote não pode ser vazio."
+                ));
             }
         }
         for (RewardKeyDefinition rk : rewardKeys.list.values()) {
             if (rk.id == null || rk.id.trim().isEmpty()) {
-                errors.add("reward_keys.toml: ID do reward key não pode ser vazio.");
+                errors.add(localized(
+                        "reward_keys.toml: reward key ID cannot be empty.",
+                        "reward_keys.toml: ID do reward key não pode ser vazio."
+                ));
             }
         }
         return errors;
+    }
+
+    public static String localized(String enUs, String ptBr) {
+        return localized(common.language, enUs, ptBr);
+    }
+
+    public static String localized(String language, String enUs, String ptBr) {
+        return isPtBr(language) ? ptBr : enUs;
+    }
+
+    public static boolean isPtBr() {
+        return isPtBr(common.language);
+    }
+
+    public static boolean isPtBr(String language) {
+        return "pt-br".equals(normalizeLanguage(language));
+    }
+
+    public static void applyMessageDefaults(String language) {
+        String normalized = normalizeLanguage(language);
+        if (isPtBr(normalized)) {
+            applyPortugueseMessageDefaults();
+        } else {
+            applyEnglishMessageDefaults();
+        }
+    }
+
+    private static void applyEnglishMessageDefaults() {
+        messages.prefix = "&7[&eEasyVip&7] ";
+        messages.noPermission = "&cYou do not have permission to use this command.";
+        messages.playerOnly = "&cThis command can only be used by players.";
+        messages.adminOnly = "&cThis command can only be used by administrators.";
+        messages.invalidPlayer = "&cPlayer not found.";
+        messages.invalidTier = "&cInvalid VIP tier.";
+        messages.invalidDuration = "&cInvalid duration.";
+        messages.invalidKey = "&cThe entered key is invalid.";
+        messages.keyExpired = "&cThis key has expired.";
+        messages.keyNoUsesLeft = "&cThis key has no uses left.";
+        messages.keyAlreadyUsed = "&cThis key has already been used.";
+        messages.keyBoundToOtherPlayer = "&cThis key is bound to another player.";
+        messages.keyConfirmRequired = "&eThis key will activate VIP {tier_display} for {duration}. Type /easyvip confirm to confirm.";
+        messages.keyConfirmed = "&aKey confirmed successfully!";
+        messages.vipActivated = "&aVIP {tier_display} activated for {duration}!";
+        messages.vipExtended = "&aVIP {tier_display} extended by {duration}!";
+        messages.vipSet = "&aVIP {tier_display} set for {player} for {duration}!";
+        messages.vipRemoved = "&aVIP {tier_display} removed from {player}!";
+        messages.vipExpired = "&cYour VIP {tier_display} expired.";
+        messages.vipNotFound = "&cYou do not have this active VIP.";
+        messages.vipTimeHeader = "&e--- Your VIPs ---";
+        messages.vipTimeLine = "&7- {tier_display}: &f{duration_left} left";
+        messages.activeVipChanged = "&aYour active VIP has been changed to {tier_display}.";
+        messages.activeVipNotOwned = "&cYou do not own this VIP tier.";
+        messages.packageGiven = "&aYou received package {package}!";
+        messages.packageNotFound = "&cPackage not found.";
+        messages.variantPending = "&eYou have a pending variant choice for package {package}. Use /easyvip variant choose {package} <variant> to pick one.";
+        messages.variantSelected = "&aVariant {variant} selected successfully!";
+        messages.variantInvalid = "&cInvalid variant. Allowed choices: {allowed_variants}";
+        messages.reloadSuccess = "&aSettings reloaded successfully!";
+        messages.reloadError = "&cError reloading settings: {error}";
+        messages.configInvalid = "&cInvalid configuration found.";
+    }
+
+    private static void applyPortugueseMessageDefaults() {
+        messages.prefix = "&7[&eEasyVip&7] ";
+        messages.noPermission = "&cVocê não tem permissão para usar este comando.";
+        messages.playerOnly = "&cEste comando só pode ser usado por jogadores.";
+        messages.adminOnly = "&cEste comando só pode ser usado por administradores.";
+        messages.invalidPlayer = "&cJogador não encontrado.";
+        messages.invalidTier = "&cTier VIP inválido.";
+        messages.invalidDuration = "&cDuração inválida.";
+        messages.invalidKey = "&cA chave inserida é inválida.";
+        messages.keyExpired = "&cEsta chave expirou.";
+        messages.keyNoUsesLeft = "&cEsta chave não possui mais usos.";
+        messages.keyAlreadyUsed = "&cEsta chave já foi usada.";
+        messages.keyBoundToOtherPlayer = "&cEsta chave está vinculada a outro jogador.";
+        messages.keyConfirmRequired = "&eEsta chave ativará o VIP {tier_display} por {duration}. Digite /easyvip confirm para confirmar.";
+        messages.keyConfirmed = "&aChave confirmada com sucesso!";
+        messages.vipActivated = "&aVIP {tier_display} ativado por {duration}!";
+        messages.vipExtended = "&aVIP {tier_display} estendido por mais {duration}!";
+        messages.vipSet = "&aVIP {tier_display} definido para {player} por {duration}!";
+        messages.vipRemoved = "&aVIP {tier_display} removido de {player}!";
+        messages.vipExpired = "&cSeu VIP {tier_display} expirou.";
+        messages.vipNotFound = "&cVocê não possui este VIP ativo.";
+        messages.vipTimeHeader = "&e--- Seus VIPs ---";
+        messages.vipTimeLine = "&7- {tier_display}: &f{duration_left} restante";
+        messages.activeVipChanged = "&aSeu VIP ativo foi alterado para {tier_display}.";
+        messages.activeVipNotOwned = "&cVocê não possui este tier VIP.";
+        messages.packageGiven = "&aVocê recebeu o pacote {package}!";
+        messages.packageNotFound = "&cPacote não encontrado.";
+        messages.variantPending = "&eVocê possui uma escolha de variante pendente para o pacote {package}. Use /easyvip variant choose {package} <variante> para escolher.";
+        messages.variantSelected = "&aVariante {variant} selecionada com sucesso!";
+        messages.variantInvalid = "&cVariante inválida. Escolhas permitidas: {allowed_variants}";
+        messages.reloadSuccess = "&aConfigurações recarregadas com sucesso!";
+        messages.reloadError = "&cErro ao recarregar configurações: {error}";
+        messages.configInvalid = "&cConfiguração inválida encontrada.";
+    }
+
+    private static String normalizeLanguage(String language) {
+        if (language == null) {
+            return "en-us";
+        }
+        String normalized = language.trim().toLowerCase(Locale.ROOT).replace('_', '-');
+        return normalized.isEmpty() ? "en-us" : normalized;
     }
 
     // ─── Helper Methods ─────────────────────────────────────

@@ -188,7 +188,10 @@ public final class KeyService {
             EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
             if (rkDef == null) {
                 player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx)
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "&cReward not found or invalid. The key was not consumed.",
+                                "&cRecompensa não encontrada ou inválida. A chave não foi consumida."
+                        ), ctx)
                 ));
                 PersistenceManager.log(playerName, "redeem_key_failed", "Reward definition missing for " + code);
                 return RedeemResult.ERROR;
@@ -214,7 +217,10 @@ public final class KeyService {
             }
             if (actions == null || actions.isEmpty()) {
                 player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx)
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "&cReward not found or invalid. The key was not consumed.",
+                                "&cRecompensa não encontrada ou inválida. A chave não foi consumida."
+                        ), ctx)
                 ));
                 PersistenceManager.log(playerName, "redeem_key_failed", "Reward actions missing for " + code);
                 return RedeemResult.ERROR;
@@ -230,7 +236,10 @@ public final class KeyService {
             boolean actionsOk = ActionExecutor.execute(player, actions, ctx);
             if (!actionsOk) {
                 player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx)
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "&cReward not found or invalid. The key was not consumed.",
+                                "&cRecompensa não encontrada ou inválida. A chave não foi consumida."
+                        ), ctx)
                 ));
                 PersistenceManager.log(playerName, "redeem_key_failed", "Reward actions failed for " + code);
                 return RedeemResult.ERROR;

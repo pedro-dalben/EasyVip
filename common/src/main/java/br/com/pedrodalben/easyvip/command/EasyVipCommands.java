@@ -31,7 +31,8 @@ public final class EasyVipCommands {
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("easyvip")
-                .requires(src -> hasPermission(src, "easyvip.use"));
+                .requires(src -> hasPermission(src, "easyvip.use"))
+                .executes(EasyVipCommands::executeHelp);
 
         // ─── Player Subcommands ─────────────────────────────────
 
@@ -206,6 +207,29 @@ public final class EasyVipCommands {
         dispatcher.register(root);
     }
 
+    private static int executeHelp(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] " + EasyVipConfig.localized("§eAvailable commands:", "§eComandos disponíveis:")), false);
+        src.sendSuccess(() -> Component.literal("§7- §f/easyvip use <key> §8- §7" + EasyVipConfig.localized("redeem a key", "resgatar uma chave")), false);
+        src.sendSuccess(() -> Component.literal("§7- §f/easyvip confirm §8- §7" + EasyVipConfig.localized("confirm key redemption", "confirmar o uso de uma chave")), false);
+        src.sendSuccess(() -> Component.literal("§7- §f/easyvip info [player] §8- §7" + EasyVipConfig.localized("view VIP times", "ver tempos de VIP")), false);
+        src.sendSuccess(() -> Component.literal("§7- §f/easyvip select <tier> §8- §7" + EasyVipConfig.localized("set active VIP", "definir VIP ativo")), false);
+        src.sendSuccess(() -> Component.literal("§7- §f/easyvip variant choose <package> <variant> §8- §7" + EasyVipConfig.localized("choose a variant", "escolher variante")), false);
+        src.sendSuccess(() -> Component.literal("§7- §f/easyvip variant pending [player] §8- §7" + EasyVipConfig.localized("view pending variants", "ver variantes pendentes")), false);
+        src.sendSuccess(() -> Component.literal("§7- §f/easyvip time [player] §8- §7" + EasyVipConfig.localized("alias for info", "alias de info")), false);
+
+        if (hasPermission(src, "easyvip.admin")) {
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin ... §8- §7" + EasyVipConfig.localized("administrative commands", "comandos administrativos")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip key ... §8- §7" + EasyVipConfig.localized("manage keys", "gerenciar chaves")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip package ... §8- §7" + EasyVipConfig.localized("manage packages", "gerenciar pacotes")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip active set <player> <tier> §8- §7" + EasyVipConfig.localized("change active VIP", "alterar VIP ativo")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip config reload|validate §8- §7" + EasyVipConfig.localized("reload or validate config", "recarregar/validar config")), false);
+        }
+
+        return 1;
+    }
+
     private static boolean hasPermission(CommandSourceStack source, String node) {
         if (source.getEntity() instanceof ServerPlayer player) {
             return PermissionBridge.hasPermission(player, node);
@@ -257,7 +281,7 @@ public final class EasyVipCommands {
                 msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyNoUsesLeft;
                 break;
             case ON_COOLDOWN:
-                msg = EasyVipConfig.messages.prefix + "&cAguarde um momento antes de usar outra chave.";
+                msg = EasyVipConfig.messages.prefix + EasyVipConfig.localized("&cPlease wait a moment before using another key.", "&cAguarde um momento antes de usar outra chave.");
                 break;
             case ALREADY_USED:
                 msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyAlreadyUsed;
@@ -289,7 +313,7 @@ public final class EasyVipCommands {
                 return;
             }
             default:
-                msg = EasyVipConfig.messages.prefix + "&cErro ao processar chave.";
+                msg = EasyVipConfig.messages.prefix + EasyVipConfig.localized("&cError processing key.", "&cErro ao processar chave.");
                 break;
         }
         player.sendSystemMessage(Component.literal(ActionExecutor.resolvePlaceholders(msg, new HashMap<>())));
@@ -315,7 +339,7 @@ public final class EasyVipCommands {
 
         PlayerVipRegistry registry = PersistenceManager.getPlayerVips(uuid);
         if (registry == null || registry.getVips().isEmpty()) {
-            src.sendSuccess(() -> Component.literal("§7[EasyVip] " + name + " não possui nenhum VIP registrado."), false);
+            src.sendSuccess(() -> Component.literal("§7[EasyVip] " + name + " " + EasyVipConfig.localized("has no registered VIPs.", "não possui nenhum VIP registrado.")), false);
             return 1;
         }
 
@@ -326,9 +350,9 @@ public final class EasyVipCommands {
             String remaining;
 
             if (record.isExpired()) {
-                remaining = "expirado";
+                remaining = EasyVipConfig.localized("expired", "expirado");
             } else if (record.getExpiryTime() == -1) {
-                remaining = "permanente";
+                remaining = EasyVipConfig.localized("permanent", "permanente");
             } else {
                 remaining = formatTimeLeft(record.getExpiryTime() - System.currentTimeMillis());
             }
@@ -337,7 +361,9 @@ public final class EasyVipCommands {
             context.put("tier_display", display);
             context.put("duration_left", remaining);
 
-            String status = record.isActive() ? " §a[Ativo]" : " §7[Inativo]";
+            String status = record.isActive()
+                    ? " §a[" + EasyVipConfig.localized("Active", "Ativo") + "]"
+                    : " §7[" + EasyVipConfig.localized("Inactive", "Inativo") + "]";
             src.sendSuccess(() -> Component.literal(ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.vipTimeLine, context) + status), false);
         }
 
@@ -418,11 +444,11 @@ public final class EasyVipCommands {
         PackageService.cleanupExpiredPendingVariants(profile.getId());
         List<PendingVariantSelection> pending = PersistenceManager.getPendingVariants(profile.getId());
         if (pending.isEmpty()) {
-            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7Sem variantes pendentes para " + profile.getName()), false);
+            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7" + EasyVipConfig.localized("No pending variants for ", "Sem variantes pendentes para ") + profile.getName()), false);
             return 1;
         }
 
-        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §eVariantes pendentes de " + profile.getName() + ": " + pending.size()), false);
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §e" + EasyVipConfig.localized("Pending variants for ", "Variantes pendentes de ") + profile.getName() + ": " + pending.size()), false);
         for (PendingVariantSelection sel : pending) {
             src.sendSuccess(() -> Component.literal("§7- §f" + sel.getPackageId() + " §8| §7" + String.join(", ", sel.getVariants())), false);
         }
@@ -433,14 +459,14 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         Collection<GameProfile> profiles = targets;
         if (profiles == null || profiles.isEmpty()) {
-            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return 0;
         }
 
         GameProfile profile = profiles.iterator().next();
         List<PendingVariantSelection> pending = PersistenceManager.getPendingVariants(profile.getId());
         if (pending.isEmpty()) {
-            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7Nenhuma variante pendente encontrada."), false);
+            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7" + EasyVipConfig.localized("No pending variant found.", "Nenhuma variante pendente encontrada.")), false);
             return 1;
         }
 
@@ -452,7 +478,7 @@ public final class EasyVipCommands {
             PersistenceManager.removePendingVariant(profile.getId(), packageId);
         }
 
-        src.sendSuccess(() -> Component.literal("§aPendências de variante removidas com sucesso."), true);
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Variant pending entries removed successfully.", "Pendências de variante removidas com sucesso.")), true);
         return 1;
     }
 
@@ -460,17 +486,17 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         Collection<GameProfile> profiles = resolveGameProfiles(ctx, "player");
         if (profiles.isEmpty()) {
-            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return 0;
         }
         GameProfile profile = profiles.iterator().next();
         String tier = StringArgumentType.getString(ctx, "tier");
         boolean success = VipService.setActiveVip(src.getServer(), profile.getId(), tier, operatorName(src));
         if (success) {
-            src.sendSuccess(() -> Component.literal("§aVIP ativo alterado com sucesso."), true);
+            src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Active VIP changed successfully.", "VIP ativo alterado com sucesso.")), true);
             return 1;
         }
-        src.sendFailure(Component.literal("§cNão foi possível alterar o VIP ativo."));
+        src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Could not change the active VIP.", "Não foi possível alterar o VIP ativo.")));
         return 0;
     }
 
@@ -480,7 +506,7 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         Collection<GameProfile> profiles = resolveGameProfiles(ctx, "player");
         if (profiles.isEmpty()) {
-            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return 0;
         }
 
@@ -504,7 +530,10 @@ public final class EasyVipCommands {
             ), true);
             return 1;
         } else {
-            src.sendFailure(Component.literal("§cErro ao adicionar VIP. Verifique se o tier existe ou se as regras de stacking bloqueiam a operação."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized(
+                    "Error adding VIP. Check that the tier exists or that stacking rules do not block the operation.",
+                    "Erro ao adicionar VIP. Verifique se o tier existe ou se as regras de stacking bloqueiam a operação."
+            )));
             return 0;
         }
     }
@@ -513,7 +542,7 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         Collection<GameProfile> profiles = resolveGameProfiles(ctx, "player");
         if (profiles.isEmpty()) {
-            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return 0;
         }
 
@@ -534,7 +563,7 @@ public final class EasyVipCommands {
             ), true);
             return 1;
         } else {
-            src.sendFailure(Component.literal("§cO jogador não possui este tier VIP ativo."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("The player does not have this active VIP tier.", "O jogador não possui este tier VIP ativo.")));
             return 0;
         }
     }
@@ -568,8 +597,10 @@ public final class EasyVipCommands {
 
         String finalBoundName = boundName;
         int finalMaxUses = maxUses;
-        src.sendSuccess(() -> Component.literal("§aChave gerada com sucesso: §e" + keyRec.getCode() 
-                + " §a(Usos: §f" + finalMaxUses + "§a, Jogador: §f" + finalBoundName + "§a)"), true);
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Key generated successfully: ", "Chave gerada com sucesso: ")
+                + "§e" + keyRec.getCode()
+                + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + finalMaxUses
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
         return 1;
     }
 
@@ -577,14 +608,14 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         Collection<GameProfile> profiles = resolveGameProfiles(ctx, "player");
         if (profiles.isEmpty()) {
-            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return 0;
         }
 
         GameProfile profile = profiles.iterator().next();
         ServerPlayer player = src.getServer().getPlayerList().getPlayer(profile.getId());
         if (player == null) {
-            src.sendFailure(Component.literal("§cO jogador precisa estar online para receber o pacote."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("The player must be online to receive the package.", "O jogador precisa estar online para receber o pacote.")));
             return 0;
         }
 
@@ -597,14 +628,14 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         Collection<GameProfile> profiles = resolveGameProfiles(ctx, "player");
         if (profiles.isEmpty()) {
-            src.sendFailure(Component.literal("§cJogador não encontrado."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return 0;
         }
 
         GameProfile profile = profiles.iterator().next();
         ServerPlayer player = src.getServer().getPlayerList().getPlayer(profile.getId());
         if (player == null) {
-            src.sendFailure(Component.literal("§cO jogador precisa estar online para receber o item."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("The player must be online to receive the item.", "O jogador precisa estar online para receber o item.")));
             return 0;
         }
 
@@ -614,21 +645,21 @@ public final class EasyVipCommands {
             record = PersistenceManager.getKey(code.trim());
         }
         if (record == null) {
-            src.sendFailure(Component.literal("§cChave não encontrada."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Key not found.", "Chave não encontrada.")));
             return 0;
         }
 
         player.getInventory().add(KeyService.createPhysicalKeyItem(record.getCode()));
-        src.sendSuccess(() -> Component.literal("§aItem de chave entregue com segurança."), true);
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Key item delivered successfully.", "Item de chave entregue com segurança.")), true);
         return 1;
     }
 
     private static int executeKeyList(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
         List<KeyRecord> keys = PersistenceManager.getAllKeys();
-        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §eKeys cadastradas: §f" + keys.size()), false);
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §e" + EasyVipConfig.localized("Registered keys: ", "Keys cadastradas: ") + "§f" + keys.size()), false);
         for (KeyRecord key : keys) {
-            src.sendSuccess(() -> Component.literal("§7- §f" + key.getCode() + " §8| §e" + key.getType() + " §8| §7usos " + key.getUsedCount() + "/" + key.getMaxUses()), false);
+            src.sendSuccess(() -> Component.literal("§7- §f" + key.getCode() + " §8| §e" + key.getType() + " §8| §7" + EasyVipConfig.localized("uses", "usos") + " " + key.getUsedCount() + "/" + key.getMaxUses()), false);
         }
         return 1;
     }
@@ -641,12 +672,12 @@ public final class EasyVipCommands {
             key = PersistenceManager.getKey(code.toUpperCase());
         }
         if (key == null) {
-            src.sendFailure(Component.literal("§cChave não encontrada."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Key not found.", "Chave não encontrada.")));
             return 0;
         }
         KeyRecord finalKey = key;
         src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + finalKey.getCode() + " §8| §f" + finalKey.getType()
-                + " §8| §f" + finalKey.getUsedCount() + "/" + finalKey.getMaxUses()), false);
+                + " §8| §f" + EasyVipConfig.localized("used", "usado") + " " + finalKey.getUsedCount() + "/" + finalKey.getMaxUses()), false);
         return 1;
     }
 
@@ -658,17 +689,17 @@ public final class EasyVipCommands {
             key = PersistenceManager.getKey(code.toUpperCase());
         }
         if (key == null) {
-            src.sendFailure(Component.literal("§cChave não encontrada."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Key not found.", "Chave não encontrada.")));
             return 0;
         }
         PersistenceManager.removeKey(key.getCode());
-        src.sendSuccess(() -> Component.literal("§aChave removida."), true);
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Key removed.", "Chave removida.")), true);
         return 1;
     }
 
     private static int executePackageList(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
-        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §ePacotes cadastrados: §f" + EasyVipConfig.packages.list.size()), false);
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §e" + EasyVipConfig.localized("Registered packages: ", "Pacotes cadastrados: ") + "§f" + EasyVipConfig.packages.list.size()), false);
         for (EasyVipConfig.PackageDefinition pkg : EasyVipConfig.packages.list.values()) {
             src.sendSuccess(() -> Component.literal("§7- §f" + pkg.id + " §8| §e" + pkg.displayName), false);
         }
@@ -680,11 +711,11 @@ public final class EasyVipCommands {
         String id = StringArgumentType.getString(ctx, "id");
         EasyVipConfig.PackageDefinition pkg = EasyVipConfig.packages.list.get(id);
         if (pkg == null) {
-            src.sendFailure(Component.literal("§cPacote não encontrado."));
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Package not found.", "Pacote não encontrado.")));
             return 0;
         }
         src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + pkg.id + " §8| §f" + pkg.displayName
-                + " §8| §7variantes " + pkg.variants.size()), false);
+                + " §8| §7" + EasyVipConfig.localized("variants", "variantes") + " " + pkg.variants.size()), false);
         return 1;
     }
 
@@ -692,7 +723,7 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         List<AuditLogRecord> logs = PersistenceManager.getAuditLogs();
         if (logs.isEmpty()) {
-            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7Nenhum log de auditoria encontrado."), false);
+            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §7" + EasyVipConfig.localized("No audit log entries found.", "Nenhum log de auditoria encontrado.")), false);
             return 1;
         }
 
@@ -709,7 +740,7 @@ public final class EasyVipCommands {
                 .withZone(ZoneId.systemDefault());
 
         src.sendSuccess(() -> Component.literal(
-                "§7[§eEasyVip§7] §eAudit log §7(página " + currentPage + "/" + totalPages + ", " + ordered.size() + " entradas)"
+                "§7[§eEasyVip§7] §e" + EasyVipConfig.localized("Audit log", "Audit log") + " §7(" + EasyVipConfig.localized("page", "página") + " " + currentPage + "/" + totalPages + ", " + ordered.size() + " " + EasyVipConfig.localized("entries", "entradas") + ")"
         ), false);
 
         for (int i = fromIndex; i < toIndex; i++) {
@@ -740,7 +771,7 @@ public final class EasyVipCommands {
         try {
             return GameProfileArgument.getGameProfiles(ctx, argumentName);
         } catch (CommandSyntaxException e) {
-            ctx.getSource().sendFailure(Component.literal("§cJogador não encontrado."));
+            ctx.getSource().sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return Collections.emptyList();
         }
     }
@@ -769,10 +800,10 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         List<String> errors = EasyVipConfig.validate();
         if (errors.isEmpty()) {
-            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §aTodas as configurações são válidas!"), true);
+            src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + EasyVipConfig.localized("All configuration settings are valid!", "Todas as configurações são válidas!")), true);
             return 1;
         } else {
-            src.sendFailure(Component.literal("§7[§eEasyVip§7] §cErros de configuração encontrados:"));
+            src.sendFailure(Component.literal("§7[§eEasyVip§7] §c" + EasyVipConfig.localized("Configuration errors found:", "Erros de configuração encontrados:")));
             for (String error : errors) {
                 src.sendFailure(Component.literal("§7- §c" + error));
             }

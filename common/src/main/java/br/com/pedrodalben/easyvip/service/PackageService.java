@@ -75,7 +75,10 @@ public final class PackageService {
             Map<String, Long> usage = PersistenceManager.getPackageUsage(player.getUUID());
             if (usage.containsKey(packageId)) {
                 player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cEste pacote já foi resgatado anteriormente.", new HashMap<>())
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "&cThis package has already been redeemed before.",
+                                "&cEste pacote já foi resgatado anteriormente."
+                        ), new HashMap<>())
                 ));
                 return false;
             }
@@ -86,7 +89,10 @@ public final class PackageService {
             Long lastUsed = usage.get(packageId);
             if (lastUsed != null && System.currentTimeMillis() - lastUsed < (def.cooldownSeconds * 1000L)) {
                 player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cEste pacote ainda está em cooldown.", new HashMap<>())
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "&cThis package is still on cooldown.",
+                                "&cEste pacote ainda está em cooldown."
+                        ), new HashMap<>())
                 ));
                 return false;
             }
@@ -144,7 +150,10 @@ public final class PackageService {
         if (match.isExpired(EasyVipConfig.common.variantSelectionTimeoutSeconds)) {
             PersistenceManager.removePendingVariant(uuid, packageId);
             player.sendSystemMessage(Component.literal(
-                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + "&cEsta escolha de variante expirou.", new HashMap<>())
+                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                            "&cThis variant choice has expired.",
+                            "&cEsta escolha de variante expirou."
+                    ), new HashMap<>())
             ));
             return false;
         }

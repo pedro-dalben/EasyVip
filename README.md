@@ -252,6 +252,7 @@ config/easyvip/
 
 Configurações gerais:
 
+- `language`
 - `key_length`
 - `key_prefix`
 - `key_charset`
@@ -286,6 +287,13 @@ Notas importantes:
 ### `messages.toml`
 
 Todas as mensagens do mod, com suporte a `&` para cores.
+
+Idioma suportado:
+
+- `en-us`
+- `pt-br`
+
+O idioma padrão é `en-us`.
 
 ### `tiers.toml`
 
