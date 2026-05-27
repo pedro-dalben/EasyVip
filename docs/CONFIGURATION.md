@@ -27,7 +27,7 @@
 
 ### Behavior notes
 
-- `command_cooldown_ticks` applies to `/easyvip use`, `/usekey` and `/easyvip confirm` per player.
+- `command_cooldown_ticks` applies to `/easyvip use`, `/easyvip activate`, `/usekey`, `/activate`, `/vip` and `/easyvip confirm` per player.
 - `allowed_dimensions` is a positive allowlist for reward/VIP use.
 - `deny_dimensions` wins over `allowed_dimensions` if both match.
 - `variant_selection_timeout_seconds` controls how long a package variant choice stays pending.

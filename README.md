@@ -154,6 +154,18 @@ Alias direto do comando de tempo do VIP.
 
 Alias direto de `/easyvip use`.
 
+#### `/easyvip activate <key>`
+
+Alias direto de `/easyvip use`.
+
+#### `/activate <key>`
+
+Alias direto de `/easyvip use`.
+
+#### `/vip <key>`
+
+Alias curto de `/easyvip use`.
+
 ### Admin
 
 #### `/easyvip admin addvip <player> <tier> <duration>`
@@ -282,7 +294,7 @@ Configurações gerais:
 
 Notas importantes:
 
-- `command_cooldown_ticks` aplica cooldown por jogador em `/easyvip use`, `/usekey` e `/easyvip confirm`
+- `command_cooldown_ticks` aplica cooldown por jogador em `/easyvip use`, `/easyvip activate`, `/usekey`, `/activate`, `/vip` e `/easyvip confirm`
 - `allowed_dimensions` permite apenas as dimensões listadas
 - `deny_dimensions` bloqueia as dimensões listadas e tem prioridade sobre `allowed_dimensions`
 - `variant_selection_timeout_seconds` controla por quanto tempo a escolha de variante fica pendente

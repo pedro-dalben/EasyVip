@@ -37,23 +37,38 @@ public final class PermissionBridge {
 
     public static boolean hasPermission(ServerPlayer player, String permission) {
         String primary = EasyVipConfig.integrations.primaryPermissionBridge.toLowerCase();
+        boolean opFallback = player.hasPermissions(4);
 
-        if (primary.equals("luckperms") && luckPermsPresent && EasyVipConfig.integrations.luckpermsEnabled) {
-            return LuckPermsWrapper.hasPermission(player, permission);
-        } else if (primary.equals("ftbranks") && ftbRanksPresent && EasyVipConfig.integrations.ftbRanksEnabled) {
-            return FtbRanksWrapper.hasPermission(player, permission);
-        }
-
-        // Fallback to active bridges if primary didn't match/is disabled
+        boolean luckPermsAllowed = false;
         if (luckPermsPresent && EasyVipConfig.integrations.luckpermsEnabled) {
-            return LuckPermsWrapper.hasPermission(player, permission);
-        }
-        if (ftbRanksPresent && EasyVipConfig.integrations.ftbRanksEnabled) {
-            return FtbRanksWrapper.hasPermission(player, permission);
+            luckPermsAllowed = LuckPermsWrapper.hasPermission(player, permission);
         }
 
-        // Vanilla OP Fallback
-        return player.hasPermissions(4);
+        boolean ftbRanksAllowed = false;
+        if (ftbRanksPresent && EasyVipConfig.integrations.ftbRanksEnabled) {
+            ftbRanksAllowed = FtbRanksWrapper.hasPermission(player, permission);
+        }
+
+        boolean primaryAllowed = switch (primary) {
+            case "luckperms" -> luckPermsAllowed;
+            case "ftbranks" -> ftbRanksAllowed;
+            default -> false;
+        };
+
+        return resolvePermission(primaryAllowed, luckPermsAllowed, ftbRanksAllowed, opFallback);
+    }
+
+    static boolean resolvePermission(boolean primaryAllowed, boolean fallbackLuckPermsAllowed, boolean fallbackFtbRanksAllowed, boolean opFallback) {
+        if (primaryAllowed) {
+            return true;
+        }
+        if (fallbackLuckPermsAllowed) {
+            return true;
+        }
+        if (fallbackFtbRanksAllowed) {
+            return true;
+        }
+        return opFallback;
     }
 
     public static void setPermission(ServerPlayer player, String permission, boolean value) {

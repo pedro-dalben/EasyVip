@@ -45,6 +45,11 @@ public final class EasyVipCommands {
                 .then(Commands.argument("key", StringArgumentType.string())
                         .executes(EasyVipCommands::executeUseKey)));
 
+        // /easyvip activate <key> (alias)
+        root.then(Commands.literal("activate")
+                .then(Commands.argument("key", StringArgumentType.string())
+                        .executes(EasyVipCommands::executeUseKey)));
+
         // /easyvip confirm
         root.then(Commands.literal("confirm")
                 .executes(EasyVipCommands::executeConfirmKey));
@@ -52,6 +57,19 @@ public final class EasyVipCommands {
         // /usekey <key> (alias)
         dispatcher.register(Commands.literal("usekey")
                 .requires(src -> hasPermission(src, "easyvip.use"))
+                .then(Commands.argument("key", StringArgumentType.string())
+                        .executes(EasyVipCommands::executeUseKey)));
+
+        // /activate <key> (alias)
+        dispatcher.register(Commands.literal("activate")
+                .requires(src -> hasPermission(src, "easyvip.use"))
+                .then(Commands.argument("key", StringArgumentType.string())
+                        .executes(EasyVipCommands::executeUseKey)));
+
+        // /vip <key> (alias)
+        dispatcher.register(Commands.literal("vip")
+                .requires(src -> hasPermission(src, "easyvip.use"))
+                .executes(EasyVipCommands::executeHelp)
                 .then(Commands.argument("key", StringArgumentType.string())
                         .executes(EasyVipCommands::executeUseKey)));
 
