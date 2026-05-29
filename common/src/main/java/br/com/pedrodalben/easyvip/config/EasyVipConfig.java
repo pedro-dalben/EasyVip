@@ -148,6 +148,8 @@ public final class EasyVipConfig {
         public String reloadSuccess = "&aConfigurações recarregadas com sucesso!";
         public String reloadError = "&cErro ao recarregar configurações: {error}";
         public String configInvalid = "&cConfiguração inválida encontrada.";
+        public String vipActivatedBroadcast = "&6[&eEasyVip&6] &aO player &e{player} &aativou o VIP &b{tier_display}&a. Parabéns!";
+        public String durationPermanent = "permanente";
     }
 
     private static void loadMessages() throws IllegalArgumentException, IOException {
@@ -187,6 +189,8 @@ public final class EasyVipConfig {
             map.put("reload_success", messages.reloadSuccess);
             map.put("reload_error", messages.reloadError);
             map.put("config_invalid", messages.configInvalid);
+            map.put("vip_activated_broadcast", messages.vipActivatedBroadcast);
+            map.put("duration_permanent", messages.durationPermanent);
             TomlWriter.writeFile(file, map);
         }
 
@@ -223,6 +227,8 @@ public final class EasyVipConfig {
         messages.reloadSuccess = getString(data, "reload_success", messages.reloadSuccess);
         messages.reloadError = getString(data, "reload_error", messages.reloadError);
         messages.configInvalid = getString(data, "config_invalid", messages.configInvalid);
+        messages.vipActivatedBroadcast = getString(data, "vip_activated_broadcast", messages.vipActivatedBroadcast);
+        messages.durationPermanent = getString(data, "duration_permanent", messages.durationPermanent);
     }
 
     // ─── Tiers Config ───────────────────────────────────────
@@ -692,6 +698,8 @@ public final class EasyVipConfig {
         messages.reloadSuccess = "&aSettings reloaded successfully!";
         messages.reloadError = "&cError reloading settings: {error}";
         messages.configInvalid = "&cInvalid configuration found.";
+        messages.vipActivatedBroadcast = "&6[&eEasyVip&6] &aPlayer &e{player} &aactivated VIP &b{tier_display}&a. Congratulations!";
+        messages.durationPermanent = "permanent";
     }
 
     private static void applyPortugueseMessageDefaults() {
@@ -727,6 +735,8 @@ public final class EasyVipConfig {
         messages.reloadSuccess = "&aConfigurações recarregadas com sucesso!";
         messages.reloadError = "&cErro ao recarregar configurações: {error}";
         messages.configInvalid = "&cConfiguração inválida encontrada.";
+        messages.vipActivatedBroadcast = "&6[&eEasyVip&6] &aO player &e{player} &aativou o VIP &b{tier_display}&a. Parabéns!";
+        messages.durationPermanent = "permanente";
     }
 
     private static String normalizeLanguage(String language) {

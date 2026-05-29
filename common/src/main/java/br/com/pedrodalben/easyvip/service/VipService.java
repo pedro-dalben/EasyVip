@@ -6,6 +6,7 @@ import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.*;
 import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
 import br.com.pedrodalben.easyvip.util.DurationParser;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -45,7 +46,7 @@ public final class VipService {
         Map<String, String> ctx = new HashMap<>();
         ctx.put("tier_id", tierId);
         ctx.put("tier_display", tierDef.displayName);
-        ctx.put("duration", durationStr);
+        ctx.put("duration", DurationParser.formatDuration(duration));
         ctx.put("player", targetName);
         ctx.put("player_uuid", uuid.toString());
 
@@ -57,6 +58,10 @@ public final class VipService {
 
             if (isOnline) {
                 executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_activate");
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipActivated, ctx)
+                ));
+                broadcastVipActivation(server, targetName, tierDef.displayName);
             } else {
                 executeTierActions(server, uuid, targetName, null, tierDef.actionsOnActivate, ctx, "vip_activate_offline");
             }
@@ -68,6 +73,14 @@ public final class VipService {
                     record.setExpiryTime(expiry);
                     record.setStartTime(now);
                     executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_replace");
+                    if (isOnline) {
+                        player.sendSystemMessage(Component.literal(
+                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipActivated, ctx)
+                        ));
+                        broadcastVipActivation(server, targetName, tierDef.displayName);
+                    } else {
+                        record.setPendingActivateActions(true);
+                    }
                 } else {
                     return false; // Denied stacking
                 }
@@ -76,10 +89,20 @@ public final class VipService {
                 if (record.getExpiryTime() == -1) {
                     // Already permanent
                     executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_stack_perm");
+                    if (isOnline) {
+                        player.sendSystemMessage(Component.literal(
+                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExtended, ctx)
+                        ));
+                    }
                 } else if (duration == -1) {
                     // Upgrading to permanent
                     record.setExpiryTime(-1);
                     executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_upgrade_perm");
+                    if (isOnline) {
+                        player.sendSystemMessage(Component.literal(
+                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExtended, ctx)
+                        ));
+                    }
                 } else {
                     // Standard duration extension
                     long currentExpiry = record.getExpiryTime();
@@ -93,8 +116,15 @@ public final class VipService {
                         }
                     }
 
+                    long addedDuration = newExpiry - currentExpiry;
+                    ctx.put("duration", DurationParser.formatDuration(addedDuration));
                     record.setExpiryTime(newExpiry);
                     executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_extend");
+                    if (isOnline) {
+                        player.sendSystemMessage(Component.literal(
+                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExtended, ctx)
+                        ));
+                    }
                 }
             }
         }
@@ -106,6 +136,22 @@ public final class VipService {
         PersistenceManager.log(operator, "add_vip", "VIP tier " + tierId + " added to " + targetName + " with duration " + durationStr);
 
         return true;
+    }
+
+    private static void broadcastVipActivation(MinecraftServer server, String playerName, String tierDisplay) {
+        if (server == null || server.getPlayerList() == null) {
+            return;
+        }
+        Map<String, String> ctx = new HashMap<>();
+        ctx.put("player", playerName);
+        ctx.put("tier_display", tierDisplay);
+        String message = ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.vipActivatedBroadcast, ctx);
+        if (message != null && !message.isEmpty()) {
+            server.getPlayerList().broadcastSystemMessage(
+                    Component.literal(message),
+                    false
+            );
+        }
     }
 
     public static boolean removeVip(MinecraftServer server, UUID uuid, String tierId, String operator) {
@@ -372,13 +418,21 @@ public final class VipService {
             if (record.isPendingActivateActions()) {
                 EasyVipConfig.VipTierDefinition tierDef = EasyVipConfig.tiers.list.get(record.getTierId());
                 if (tierDef != null) {
+                    long remaining = record.getExpiryTime() == -1 ? -1 : (record.getExpiryTime() - record.getStartTime());
+                    String formattedDuration = DurationParser.formatDuration(remaining);
+
                     Map<String, String> ctx = new HashMap<>();
                     ctx.put("tier_id", record.getTierId());
                     ctx.put("tier_display", tierDef.displayName);
-                    ctx.put("duration", "activation");
+                    ctx.put("duration", formattedDuration);
                     ctx.put("player", player.getGameProfile().getName());
                     ctx.put("player_uuid", uuid.toString());
                     executeTierActions(server, uuid, player.getGameProfile().getName(), player, tierDef.actionsOnActivate, ctx, "vip_pending_activate");
+
+                    player.sendSystemMessage(Component.literal(
+                            ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipActivated, ctx)
+                    ));
+                    broadcastVipActivation(server, player.getGameProfile().getName(), tierDef.displayName);
                 }
                 record.setPendingActivateActions(false);
             }

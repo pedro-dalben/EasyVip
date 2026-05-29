@@ -13,6 +13,8 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
+import br.com.pedrodalben.easyvip.util.DurationParser;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.GameProfileArgument;
@@ -91,6 +93,7 @@ public final class EasyVipCommands {
         // /easyvip select <tier>
         root.then(Commands.literal("select")
                 .then(Commands.argument("tier", StringArgumentType.word())
+                        .suggests(suggestTiers())
                         .executes(EasyVipCommands::executeSelectVip)));
 
         // /easyvip variant ...
@@ -99,7 +102,9 @@ public final class EasyVipCommands {
 
         variant.then(Commands.literal("choose")
                 .then(Commands.argument("package", StringArgumentType.word())
+                        .suggests(suggestPackages())
                         .then(Commands.argument("variant", StringArgumentType.word())
+                                .suggests(suggestVariants())
                                 .executes(EasyVipCommands::executeChooseVariant))));
 
         variant.then(Commands.literal("pending")
@@ -113,6 +118,7 @@ public final class EasyVipCommands {
                         .requires(src -> hasPermission(src, "easyvip.admin"))
                         .executes(ctx -> executeVariantClear(ctx, resolveGameProfiles(ctx, "player"), null))
                         .then(Commands.argument("package_id", StringArgumentType.word())
+                                .suggests(suggestPackages())
                                 .executes(ctx -> executeVariantClear(
                                         ctx,
                                         resolveGameProfiles(ctx, "player"),
@@ -128,6 +134,7 @@ public final class EasyVipCommands {
         admin.then(Commands.literal("addvip")
                 .then(Commands.argument("player", GameProfileArgument.gameProfile())
                         .then(Commands.argument("tier", StringArgumentType.word())
+                                .suggests(suggestTiers())
                                 .then(Commands.argument("duration", StringArgumentType.string())
                                         .executes(EasyVipCommands::executeAddVip)))));
 
@@ -135,12 +142,14 @@ public final class EasyVipCommands {
         admin.then(Commands.literal("removevip")
                 .then(Commands.argument("player", GameProfileArgument.gameProfile())
                         .then(Commands.argument("tier", StringArgumentType.word())
+                                .suggests(suggestTiers())
                                 .executes(EasyVipCommands::executeRemoveVip))));
 
         // /easyvip admin generate vip <tier> <duration> [max_uses] [bound_player]
         admin.then(Commands.literal("generate")
                 .then(Commands.literal("vip")
                         .then(Commands.argument("tier", StringArgumentType.word())
+                                .suggests(suggestTiers())
                                 .then(Commands.argument("duration", StringArgumentType.string())
                                         .executes(ctx -> executeGenerateKey(ctx, "vip", null))
                                         .then(Commands.argument("max_uses", IntegerArgumentType.integer(1))
@@ -152,6 +161,7 @@ public final class EasyVipCommands {
         admin.then(Commands.literal("generate")
                 .then(Commands.literal("reward")
                         .then(Commands.argument("reward_key_id", StringArgumentType.word())
+                                .suggests(suggestRewardKeys())
                                 .executes(ctx -> executeGenerateKey(ctx, "reward", null))
                                 .then(Commands.argument("max_uses", IntegerArgumentType.integer(1))
                                         .executes(ctx -> executeGenerateKey(ctx, "reward", null))
@@ -162,6 +172,7 @@ public final class EasyVipCommands {
         admin.then(Commands.literal("givepackage")
                 .then(Commands.argument("player", GameProfileArgument.gameProfile())
                         .then(Commands.argument("package_id", StringArgumentType.word())
+                                .suggests(suggestPackages())
                                 .executes(EasyVipCommands::executeGivePackage))));
 
         // /easyvip admin giveitemkey <player> <code>
@@ -185,7 +196,9 @@ public final class EasyVipCommands {
                 .requires(src -> hasPermission(src, "easyvip.admin"));
         packageCmd.then(Commands.literal("list").executes(EasyVipCommands::executePackageList));
         packageCmd.then(Commands.literal("info")
-                .then(Commands.argument("id", StringArgumentType.word()).executes(EasyVipCommands::executePackageInfo)));
+                .then(Commands.argument("id", StringArgumentType.word())
+                        .suggests(suggestPackages())
+                        .executes(EasyVipCommands::executePackageInfo)));
         admin.then(packageCmd);
 
         // /easyvip admin audit [page]
@@ -619,7 +632,22 @@ public final class EasyVipCommands {
 
         GameProfile profile = profiles.iterator().next();
         String tier = StringArgumentType.getString(ctx, "tier");
+        if (!EasyVipConfig.tiers.list.containsKey(tier)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidTier));
+            return 0;
+        }
+
         String duration = StringArgumentType.getString(ctx, "duration");
+        long dur;
+        try {
+            dur = DurationParser.parseDurationMillis(duration);
+        } catch (Exception e) {
+            dur = 0;
+        }
+        if (dur == 0 || (dur < 0 && dur != -1)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidDuration));
+            return 0;
+        }
 
         String operator = src.getEntity() instanceof ServerPlayer op ? op.getGameProfile().getName() : "Console";
 
@@ -655,6 +683,10 @@ public final class EasyVipCommands {
 
         GameProfile profile = profiles.iterator().next();
         String tier = StringArgumentType.getString(ctx, "tier");
+        if (!EasyVipConfig.tiers.list.containsKey(tier)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidTier));
+            return 0;
+        }
         String operator = src.getEntity() instanceof ServerPlayer op ? op.getGameProfile().getName() : "Console";
 
         boolean success = VipService.removeVip(src.getServer(), profile.getId(), tier, operator);
@@ -695,10 +727,28 @@ public final class EasyVipCommands {
         KeyRecord keyRec;
         if (type.equalsIgnoreCase("vip")) {
             String tier = StringArgumentType.getString(ctx, "tier");
+            if (!EasyVipConfig.tiers.list.containsKey(tier)) {
+                src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidTier));
+                return 0;
+            }
             String duration = StringArgumentType.getString(ctx, "duration");
+            long dur;
+            try {
+                dur = DurationParser.parseDurationMillis(duration);
+            } catch (Exception e) {
+                dur = 0;
+            }
+            if (dur == 0 || (dur < 0 && dur != -1)) {
+                src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidDuration));
+                return 0;
+            }
             keyRec = KeyService.generateVipKey(tier, duration, maxUses, boundUuid, -1, null);
         } else {
             String rkId = StringArgumentType.getString(ctx, "reward_key_id");
+            if (!EasyVipConfig.rewardKeys.list.containsKey(rkId)) {
+                src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.localized("Reward key not found.", "Chave de recompensa não encontrada.")));
+                return 0;
+            }
             keyRec = KeyService.generateRewardKey(rkId, maxUses, boundUuid, -1, null);
         }
 
@@ -727,6 +777,10 @@ public final class EasyVipCommands {
         }
 
         String packageId = StringArgumentType.getString(ctx, "package_id");
+        if (!EasyVipConfig.packages.list.containsKey(packageId)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.packageNotFound));
+            return 0;
+        }
         boolean success = PackageService.givePackage(player, packageId);
         return success ? 1 : 0;
     }
@@ -881,6 +935,61 @@ public final class EasyVipCommands {
             ctx.getSource().sendFailure(Component.literal("§c" + EasyVipConfig.localized("Player not found.", "Jogador não encontrado.")));
             return Collections.emptyList();
         }
+    }
+
+    private static SuggestionProvider<CommandSourceStack> suggestTiers() {
+        return (ctx, builder) -> {
+            String remaining = builder.getRemaining().toLowerCase();
+            for (String tierId : EasyVipConfig.tiers.list.keySet()) {
+                if (tierId.toLowerCase().startsWith(remaining)) {
+                    builder.suggest(tierId);
+                }
+            }
+            return builder.buildFuture();
+        };
+    }
+
+    private static SuggestionProvider<CommandSourceStack> suggestPackages() {
+        return (ctx, builder) -> {
+            String remaining = builder.getRemaining().toLowerCase();
+            for (String pkgId : EasyVipConfig.packages.list.keySet()) {
+                if (pkgId.toLowerCase().startsWith(remaining)) {
+                    builder.suggest(pkgId);
+                }
+            }
+            return builder.buildFuture();
+        };
+    }
+
+    private static SuggestionProvider<CommandSourceStack> suggestRewardKeys() {
+        return (ctx, builder) -> {
+            String remaining = builder.getRemaining().toLowerCase();
+            for (String keyId : EasyVipConfig.rewardKeys.list.keySet()) {
+                if (keyId.toLowerCase().startsWith(remaining)) {
+                    builder.suggest(keyId);
+                }
+            }
+            return builder.buildFuture();
+        };
+    }
+
+    private static SuggestionProvider<CommandSourceStack> suggestVariants() {
+        return (ctx, builder) -> {
+            try {
+                String pkgId = StringArgumentType.getString(ctx, "package");
+                EasyVipConfig.PackageDefinition pkg = EasyVipConfig.packages.list.get(pkgId);
+                if (pkg != null && pkg.variants != null) {
+                    String remaining = builder.getRemaining().toLowerCase();
+                    for (String variant : pkg.variants.keySet()) {
+                        if (variant.toLowerCase().startsWith(remaining)) {
+                            builder.suggest(variant);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+            return builder.buildFuture();
+        };
     }
 
     // ─── Config Executions ──────────────────────────────────
