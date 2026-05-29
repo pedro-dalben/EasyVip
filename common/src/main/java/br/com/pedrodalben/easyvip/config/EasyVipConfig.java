@@ -717,7 +717,7 @@ public final class EasyVipConfig {
         messages.keyBoundToOtherPlayer = "&cEsta chave está vinculada a outro jogador.";
         messages.keyConfirmRequired = "&eEsta chave ativará o VIP {tier_display} por {duration}. Digite /easyvip confirm para confirmar.";
         messages.keyConfirmed = "&aChave confirmada com sucesso!";
-        messages.vipActivated = "&aVIP {tier_display} ativado por {duration}!";
+        messages.vipActivated = "&aVocê ativou o VIP {tier_display} por {duration}.";
         messages.vipExtended = "&aVIP {tier_display} estendido por mais {duration}!";
         messages.vipSet = "&aVIP {tier_display} definido para {player} por {duration}!";
         messages.vipRemoved = "&aVIP {tier_display} removido de {player}!";

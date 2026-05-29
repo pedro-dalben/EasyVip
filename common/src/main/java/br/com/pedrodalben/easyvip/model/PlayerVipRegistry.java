@@ -8,6 +8,15 @@ public class PlayerVipRegistry {
     private UUID playerUuid;
     private String playerName;
     private Map<String, PlayerVipRecord> vips = new HashMap<>();
+    private String lastObservedActiveVip;
+
+    public String getLastObservedActiveVip() {
+        return lastObservedActiveVip;
+    }
+
+    public void setLastObservedActiveVip(String lastObservedActiveVip) {
+        this.lastObservedActiveVip = lastObservedActiveVip;
+    }
 
     public PlayerVipRegistry() {
     }

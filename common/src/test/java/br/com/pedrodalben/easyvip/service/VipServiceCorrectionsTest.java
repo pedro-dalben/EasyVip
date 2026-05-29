@@ -112,6 +112,50 @@ class VipServiceCorrectionsTest {
         }
     }
 
+    @Test
+    void offlineActiveVipSyncsOnlineOnLogin() {
+        UUID uuid = UUID.randomUUID();
+        EasyVipConfig.VipTierDefinition tier = tier("vip_plus", 10, List.of(), List.of(), List.of());
+        tier.actionsOnSetActive = List.of(action("add_ftb_rank", Map.of("rank", "vip_plus")));
+        EasyVipConfig.tiers.list.put(tier.id, tier);
+
+        PlayerVipRegistry registry = new PlayerVipRegistry(uuid);
+        registry.setPlayerName("PedropsRei");
+        registry.getVips().put("vip_plus", new PlayerVipRecord("vip_plus", System.currentTimeMillis(), -1L, true, false));
+        registry.setLastObservedActiveVip(null);
+        PersistenceManager.updatePlayerVips(uuid, registry);
+
+        try (MockedStatic<ActionExecutor> mockedExecutor = mockStatic(ActionExecutor.class)) {
+            mockedExecutor.when(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap())).thenReturn(true);
+
+            // 1. Evaluate while offline
+            VipService.evaluateActiveVip(null, uuid, registry);
+
+            // lastObserved should still be null because player was offline
+            assertNull(registry.getLastObservedActiveVip());
+            // Action should have been executed
+            mockedExecutor.verify(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap()), times(1));
+
+            // Clear mock invocations to verify the next step
+            mockedExecutor.clearInvocations();
+
+            // 2. Evaluate again while offline - should run again because it hasn't been observed online yet
+            VipService.evaluateActiveVip(null, uuid, registry);
+            assertNull(registry.getLastObservedActiveVip());
+            mockedExecutor.verify(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap()), times(1));
+
+            mockedExecutor.clearInvocations();
+
+            // 3. Simulate online login by setting lastObservedActiveVip (which the code would do when online)
+            registry.setLastObservedActiveVip("vip_plus");
+
+            // 4. Evaluate again - should NOT run because desired matches lastObserved
+            VipService.evaluateActiveVip(null, uuid, registry);
+            assertEquals("vip_plus", registry.getLastObservedActiveVip());
+            mockedExecutor.verify(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap()), never());
+        }
+    }
+
     private EasyVipConfig.VipTierDefinition tier(String id, int priority, List<Map<String, Object>> activate, List<Map<String, Object>> expire, List<Map<String, Object>> unset) {
         EasyVipConfig.VipTierDefinition tier = new EasyVipConfig.VipTierDefinition();
         tier.id = id;

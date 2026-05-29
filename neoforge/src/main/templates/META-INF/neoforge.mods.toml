@@ -25,3 +25,17 @@ It supports custom VIP tiers, key activation, reward packages, and variants sele
     versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="ftbranks"
+    type="optional"
+    versionRange=""
+    ordering="AFTER"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="luckperms"
+    type="optional"
+    versionRange=""
+    ordering="AFTER"
+    side="BOTH"

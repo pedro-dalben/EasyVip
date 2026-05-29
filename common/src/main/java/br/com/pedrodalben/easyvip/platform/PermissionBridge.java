@@ -10,17 +10,17 @@ public final class PermissionBridge {
 
     static {
         try {
-            Class.forName("net.luckperms.api.LuckPermsProvider");
+            Class.forName("net.luckperms.api.LuckPermsProvider", false, PermissionBridge.class.getClassLoader());
             luckPermsPresent = true;
-        } catch (ClassNotFoundException e) {
-            // Not present
+        } catch (Throwable e) {
+            luckPermsPresent = false;
         }
 
         try {
-            Class.forName("dev.ftb.mods.ftbranks.api.FTBRanksAPI");
+            Class.forName("dev.ftb.mods.ftbranks.api.FTBRanksAPI", false, PermissionBridge.class.getClassLoader());
             ftbRanksPresent = true;
-        } catch (ClassNotFoundException e) {
-            // Not present
+        } catch (Throwable e) {
+            ftbRanksPresent = false;
         }
     }
 

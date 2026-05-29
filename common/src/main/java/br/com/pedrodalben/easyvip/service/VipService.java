@@ -253,11 +253,12 @@ public final class VipService {
     }
 
     public static void evaluateActiveVip(MinecraftServer server, UUID uuid, PlayerVipRegistry registry) {
-        if (registry == null || registry.getVips().isEmpty()) {
+        if (registry == null) {
             return;
         }
 
         ServerPlayer player = getOnlinePlayer(server, uuid);
+
         PlayerVipRecord highestVip = null;
         int highestPriority = -1;
 
@@ -283,52 +284,60 @@ public final class VipService {
             }
         }
 
-        if (validVips.isEmpty()) {
+        PlayerVipRecord targetActive = null;
+        if (!validVips.isEmpty()) {
+            boolean forceHighest = EasyVipConfig.common.forceHighestPriorityAsActive;
+            if (forceHighest || currentActive == null || currentActive.isExpired()) {
+                targetActive = (highestVip != null) ? highestVip : validVips.get(0);
+            } else {
+                targetActive = currentActive;
+            }
+        }
+
+        // Apply active/inactive flag updates
+        if (currentActive != targetActive) {
             if (currentActive != null) {
-                EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(currentActive.getTierId());
+                currentActive.setActive(false);
+            }
+            if (targetActive != null) {
+                targetActive.setActive(true);
+            }
+        }
+
+        // Sync transition actions online/offline
+        String desiredActiveVip = (targetActive != null) ? targetActive.getTierId() : null;
+        String lastObserved = registry.getLastObservedActiveVip();
+
+        if (!Objects.equals(desiredActiveVip, lastObserved)) {
+            // Run unset actions for lastObserved if it's not null
+            if (lastObserved != null) {
+                EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(lastObserved);
                 if (oldDef != null) {
                     Map<String, String> ctx = new HashMap<>();
-                    ctx.put("tier_id", currentActive.getTierId());
+                    ctx.put("tier_id", lastObserved);
                     ctx.put("tier_display", oldDef.displayName);
                     ctx.put("player", resolvePlayerName(server, uuid));
                     ctx.put("player_uuid", uuid.toString());
-                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_clear_active");
+                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_deactivate_old");
                 }
             }
-            return;
-        }
 
-        boolean forceHighest = EasyVipConfig.common.forceHighestPriorityAsActive;
-
-        if (forceHighest || currentActive == null || currentActive.isExpired()) {
-            PlayerVipRecord targetActive = (highestVip != null) ? highestVip : validVips.get(0);
-
-            if (currentActive != targetActive) {
-                // Deactivate old active
-                if (currentActive != null) {
-                    currentActive.setActive(false);
-                    EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(currentActive.getTierId());
-                    if (oldDef != null) {
-                        Map<String, String> ctx = new HashMap<>();
-                        ctx.put("tier_id", currentActive.getTierId());
-                        ctx.put("tier_display", oldDef.displayName);
-                        ctx.put("player", resolvePlayerName(server, uuid));
-                        ctx.put("player_uuid", uuid.toString());
-                        executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_deactivate_old");
-                    }
-                }
-
-                // Activate new active
-                targetActive.setActive(true);
-                EasyVipConfig.VipTierDefinition newDef = EasyVipConfig.tiers.list.get(targetActive.getTierId());
+            // Run set actions for desiredActiveVip if it's not null
+            if (desiredActiveVip != null) {
+                EasyVipConfig.VipTierDefinition newDef = EasyVipConfig.tiers.list.get(desiredActiveVip);
                 if (newDef != null) {
                     Map<String, String> ctx = new HashMap<>();
-                    ctx.put("tier_id", targetActive.getTierId());
+                    ctx.put("tier_id", desiredActiveVip);
                     ctx.put("tier_display", newDef.displayName);
                     ctx.put("player", resolvePlayerName(server, uuid));
                     ctx.put("player_uuid", uuid.toString());
                     executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, newDef.actionsOnSetActive, ctx, "vip_activate_new");
                 }
+            }
+
+            // Update observed state only if online
+            if (player != null) {
+                registry.setLastObservedActiveVip(desiredActiveVip);
             }
         }
     }

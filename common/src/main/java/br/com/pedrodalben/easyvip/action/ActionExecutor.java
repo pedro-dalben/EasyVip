@@ -50,7 +50,7 @@ public final class ActionExecutor {
                 if (!executeSingle(actionContext, action, fullContext)) {
                     allOk = false;
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 System.err.println("[EasyVip] Error executing action of type " + action.get("type") + ": " + e.getMessage());
                 if (EasyVipConfig.common.debug) {
                     e.printStackTrace();
@@ -355,8 +355,7 @@ public final class ActionExecutor {
     }
 
     private static boolean executeFtbRankCommand(MinecraftServer server, String cmd) {
-        if (!PermissionBridge.isFtbRanksPresent() || !EasyVipConfig.integrations.ftbRanksEnabled) {
-            System.err.println("[EasyVip] FTB Ranks action ignored because FTB Ranks is not available.");
+        if (!EasyVipConfig.integrations.ftbRanksEnabled) {
             return false;
         }
         return executeServerCommand(server, cmd);
