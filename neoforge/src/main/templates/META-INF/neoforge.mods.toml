@@ -29,13 +29,13 @@ It supports custom VIP tiers, key activation, reward packages, and variants sele
 [[dependencies.${mod_id}]]
     modId="ftbranks"
     type="optional"
-    versionRange=""
+    versionRange="[0,)"
     ordering="AFTER"
     side="BOTH"
 
 [[dependencies.${mod_id}]]
     modId="luckperms"
     type="optional"
-    versionRange=""
+    versionRange="[0,)"
     ordering="AFTER"
     side="BOTH"

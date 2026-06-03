@@ -5,6 +5,7 @@ import net.luckperms.api.LuckPermsProvider;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.Node;
 import net.luckperms.api.node.types.PermissionNode;
+import net.luckperms.api.node.types.InheritanceNode;
 import net.minecraft.server.level.ServerPlayer;
 
 public final class LuckPermsWrapper {
@@ -31,6 +32,24 @@ public final class LuckPermsWrapper {
             User user = api.getUserManager().getUser(player.getUUID());
             if (user != null) {
                 Node node = PermissionNode.builder(permission).value(value).build();
+                if (value) {
+                    user.data().add(node);
+                } else {
+                    user.data().remove(node);
+                }
+                api.getUserManager().saveUser(user);
+            }
+        } catch (Throwable t) {
+            // Safe fallback
+        }
+    }
+
+    public static void setGroup(ServerPlayer player, String group, boolean value) {
+        try {
+            LuckPerms api = LuckPermsProvider.get();
+            User user = api.getUserManager().getUser(player.getUUID());
+            if (user != null) {
+                InheritanceNode node = InheritanceNode.builder(group).value(value).build();
                 if (value) {
                     user.data().add(node);
                 } else {

@@ -176,9 +176,9 @@ public final class VipService {
             ctx.put("player_uuid", uuid.toString());
 
             if (record.isActive()) {
-                executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, tierDef.actionsOnUnsetActive, ctx, "vip_remove_unset_active");
+                executeUnsetActiveActions(server, uuid, player, tierId, tierDef, ctx, "vip_remove_unset_active");
             } else {
-                executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, tierDef.actionsOnUnsetActive, ctx, "vip_remove_unset_active_offline");
+                executeUnsetActiveActions(server, uuid, player, tierId, tierDef, ctx, "vip_remove_unset_active_offline");
             }
             executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, tierDef.actionsOnRemove, ctx, "vip_remove");
         } else if (tierDef != null) {
@@ -187,7 +187,7 @@ public final class VipService {
             ctx.put("tier_display", tierDef.displayName);
             ctx.put("player", resolvePlayerName(server, uuid));
             ctx.put("player_uuid", uuid.toString());
-            executeTierActions(server, uuid, resolvePlayerName(server, uuid), null, tierDef.actionsOnUnsetActive, ctx, "vip_remove_offline_unset");
+            executeUnsetActiveActions(server, uuid, null, tierId, tierDef, ctx, "vip_remove_offline_unset");
             executeTierActions(server, uuid, resolvePlayerName(server, uuid), null, tierDef.actionsOnRemove, ctx, "vip_remove_offline");
         }
 
@@ -228,7 +228,7 @@ public final class VipService {
                     ctx.put("tier_display", oldDef.displayName);
                     ctx.put("player", resolvePlayerName(server, uuid));
                     ctx.put("player_uuid", uuid.toString());
-                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_active_unset");
+                    executeUnsetActiveActions(server, uuid, player, record.getTierId(), oldDef, ctx, "vip_active_unset");
                 }
             }
         }
@@ -242,8 +242,12 @@ public final class VipService {
                 ctx.put("tier_display", newDef.displayName);
                 ctx.put("player", resolvePlayerName(server, uuid));
                 ctx.put("player_uuid", uuid.toString());
-                executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, newDef.actionsOnSetActive, ctx, "vip_active_set");
+                executeSetActiveActions(server, uuid, player, newDef, ctx, "vip_active_set");
             }
+        }
+
+        if (player != null) {
+            registry.setLastObservedActiveVip(tierId);
         }
 
         registry.setPlayerName(resolvePlayerName(server, uuid));
@@ -312,14 +316,12 @@ public final class VipService {
             // Run unset actions for lastObserved if it's not null
             if (lastObserved != null) {
                 EasyVipConfig.VipTierDefinition oldDef = EasyVipConfig.tiers.list.get(lastObserved);
-                if (oldDef != null) {
-                    Map<String, String> ctx = new HashMap<>();
-                    ctx.put("tier_id", lastObserved);
-                    ctx.put("tier_display", oldDef.displayName);
-                    ctx.put("player", resolvePlayerName(server, uuid));
-                    ctx.put("player_uuid", uuid.toString());
-                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, oldDef.actionsOnUnsetActive, ctx, "vip_deactivate_old");
-                }
+                Map<String, String> ctx = new HashMap<>();
+                ctx.put("tier_id", lastObserved);
+                ctx.put("tier_display", oldDef != null ? oldDef.displayName : lastObserved);
+                ctx.put("player", resolvePlayerName(server, uuid));
+                ctx.put("player_uuid", uuid.toString());
+                executeUnsetActiveActions(server, uuid, player, lastObserved, oldDef, ctx, "vip_deactivate_old");
             }
 
             // Run set actions for desiredActiveVip if it's not null
@@ -331,7 +333,7 @@ public final class VipService {
                     ctx.put("tier_display", newDef.displayName);
                     ctx.put("player", resolvePlayerName(server, uuid));
                     ctx.put("player_uuid", uuid.toString());
-                    executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, newDef.actionsOnSetActive, ctx, "vip_activate_new");
+                    executeSetActiveActions(server, uuid, player, newDef, ctx, "vip_activate_new");
                 }
             }
 
@@ -386,7 +388,7 @@ public final class VipService {
 
                 if (tierDef != null) {
                     if (record.isActive()) {
-                        executeTierActions(server, uuid, playerName, player, tierDef.actionsOnUnsetActive, ctx, "vip_expire_unset_active");
+                        executeUnsetActiveActions(server, uuid, player, record.getTierId(), tierDef, ctx, "vip_expire_unset_active");
                     }
                     executeTierActions(server, uuid, playerName, player, tierDef.actionsOnExpire, ctx, "vip_expire");
                     if (player != null) {
@@ -473,6 +475,47 @@ public final class VipService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static void executeSetActiveActions(MinecraftServer server, UUID uuid, ServerPlayer player, EasyVipConfig.VipTierDefinition tierDef, Map<String, String> ctx, String source) {
+        if (tierDef == null) return;
+        List<Map<String, Object>> actions = new ArrayList<>();
+        if (tierDef.actionsOnSetActive != null) {
+            actions.addAll(tierDef.actionsOnSetActive);
+        }
+        if (EasyVipConfig.integrations.ftbRanksEnabled) {
+            Map<String, Object> ftbAction = new HashMap<>();
+            ftbAction.put("type", "add_ftb_rank");
+            ftbAction.put("rank", tierDef.id);
+            actions.add(ftbAction);
+        }
+        if (EasyVipConfig.integrations.luckpermsEnabled) {
+            Map<String, Object> lpAction = new HashMap<>();
+            lpAction.put("type", "add_luckperms_group");
+            lpAction.put("group", tierDef.id);
+            actions.add(lpAction);
+        }
+        executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, actions, ctx, source);
+    }
+
+    private static void executeUnsetActiveActions(MinecraftServer server, UUID uuid, ServerPlayer player, String tierId, EasyVipConfig.VipTierDefinition tierDef, Map<String, String> ctx, String source) {
+        List<Map<String, Object>> actions = new ArrayList<>();
+        if (tierDef != null && tierDef.actionsOnUnsetActive != null) {
+            actions.addAll(tierDef.actionsOnUnsetActive);
+        }
+        if (EasyVipConfig.integrations.ftbRanksEnabled) {
+            Map<String, Object> ftbAction = new HashMap<>();
+            ftbAction.put("type", "remove_ftb_rank");
+            ftbAction.put("rank", tierId);
+            actions.add(ftbAction);
+        }
+        if (EasyVipConfig.integrations.luckpermsEnabled) {
+            Map<String, Object> lpAction = new HashMap<>();
+            lpAction.put("type", "remove_luckperms_group");
+            lpAction.put("group", tierId);
+            actions.add(lpAction);
+        }
+        executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, actions, ctx, source);
     }
 
     private static boolean executeTierActions(MinecraftServer server, UUID uuid, String playerName, ServerPlayer onlinePlayer,

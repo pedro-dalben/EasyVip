@@ -317,6 +317,36 @@ public final class ActionExecutor {
                 }
                 break;
             }
+            case "add_luckperms_group": {
+                String group = getString(action, "group", "");
+                if (!group.isEmpty()) {
+                    if (player != null) {
+                        PermissionBridge.setGroup(player, group, true);
+                    } else if (server != null) {
+                        String playerName = context.get("player");
+                        if (playerName != null && !playerName.isEmpty()) {
+                            executeServerCommand(server, "lp user " + playerName + " parent add " + group);
+                        }
+                    }
+                    return true;
+                }
+                break;
+            }
+            case "remove_luckperms_group": {
+                String group = getString(action, "group", "");
+                if (!group.isEmpty()) {
+                    if (player != null) {
+                        PermissionBridge.setGroup(player, group, false);
+                    } else if (server != null) {
+                        String playerName = context.get("player");
+                        if (playerName != null && !playerName.isEmpty()) {
+                            executeServerCommand(server, "lp user " + playerName + " parent remove " + group);
+                        }
+                    }
+                    return true;
+                }
+                break;
+            }
         }
         return false;
     }
