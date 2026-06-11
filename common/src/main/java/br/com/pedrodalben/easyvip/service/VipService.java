@@ -6,11 +6,18 @@ import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.*;
 import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
 import br.com.pedrodalben.easyvip.util.DurationParser;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class VipService {
 
@@ -56,14 +63,12 @@ public final class VipService {
             record = new PlayerVipRecord(tierId, now, expiry, false, !isOnline);
             registry.getVips().put(tierId, record);
 
+            enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, expiry);
             if (isOnline) {
-                executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_activate");
-                player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipActivated, ctx)
-                ));
+                executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_activate", tierDef.messages.activated);
                 broadcastVipActivation(server, targetName, tierDef.displayName);
             } else {
-                executeTierActions(server, uuid, targetName, null, tierDef.actionsOnActivate, ctx, "vip_activate_offline");
+                record.setPendingActivateActions(true);
             }
         } else {
             // Extension or stack check
@@ -72,11 +77,9 @@ public final class VipService {
                     long expiry = (duration == -1) ? -1 : now + duration;
                     record.setExpiryTime(expiry);
                     record.setStartTime(now);
-                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_replace");
+                    enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, expiry);
                     if (isOnline) {
-                        player.sendSystemMessage(Component.literal(
-                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipActivated, ctx)
-                        ));
+                        executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_replace", tierDef.messages.activated);
                         broadcastVipActivation(server, targetName, tierDef.displayName);
                     } else {
                         record.setPendingActivateActions(true);
@@ -88,20 +91,20 @@ public final class VipService {
                 // Stacking allowed
                 if (record.getExpiryTime() == -1) {
                     // Already permanent
-                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_stack_perm");
+                    enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, record.getExpiryTime());
                     if (isOnline) {
-                        player.sendSystemMessage(Component.literal(
-                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExtended, ctx)
-                        ));
+                        executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_stack_perm", EasyVipConfig.messages.vipExtended);
+                    } else {
+                        record.setPendingActivateActions(true);
                     }
                 } else if (duration == -1) {
                     // Upgrading to permanent
                     record.setExpiryTime(-1);
-                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_upgrade_perm");
+                    enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, record.getExpiryTime());
                     if (isOnline) {
-                        player.sendSystemMessage(Component.literal(
-                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExtended, ctx)
-                        ));
+                        executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_upgrade_perm", EasyVipConfig.messages.vipExtended);
+                    } else {
+                        record.setPendingActivateActions(true);
                     }
                 } else {
                     // Standard duration extension
@@ -119,11 +122,11 @@ public final class VipService {
                     long addedDuration = newExpiry - currentExpiry;
                     ctx.put("duration", DurationParser.formatDuration(addedDuration));
                     record.setExpiryTime(newExpiry);
-                    executeTierActions(server, uuid, targetName, player, tierDef.actionsOnActivate, ctx, "vip_extend");
+                    enrichVipContext(ctx, uuid, targetName, tierDef, addedDuration, now, newExpiry);
                     if (isOnline) {
-                        player.sendSystemMessage(Component.literal(
-                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExtended, ctx)
-                        ));
+                        executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_extend", EasyVipConfig.messages.vipExtended);
+                    } else {
+                        record.setPendingActivateActions(true);
                     }
                 }
             }
@@ -152,6 +155,185 @@ public final class VipService {
                     false
             );
         }
+    }
+
+    private static void executeVipActivationFlow(MinecraftServer server, UUID uuid, ServerPlayer player, String playerName,
+                                                 EasyVipConfig.VipTierDefinition tierDef, Map<String, String> ctx,
+                                                 String source, String messageTemplate) {
+        if (tierDef == null || player == null) {
+            return;
+        }
+
+        if (tierDef.actionsOnActivate != null && !tierDef.actionsOnActivate.isEmpty()) {
+            executeTierActions(server, uuid, playerName, player, tierDef.actionsOnActivate, ctx, source + "_legacy");
+        }
+
+        if (tierDef.commands != null && tierDef.commands.activate != null && !tierDef.commands.activate.isEmpty()) {
+            executeServerCommandList(server, uuid, player, playerName, tierDef.commands.activate, ctx, source + "_commands");
+        }
+
+        if (messageTemplate != null && !messageTemplate.isEmpty()) {
+            player.sendSystemMessage(Component.literal(
+                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + messageTemplate, ctx)
+            ));
+        }
+
+        executeActivationItems(server, player, tierDef, ctx, source);
+    }
+
+    private static void executeVipExpireFlow(MinecraftServer server, UUID uuid, ServerPlayer player, String playerName,
+                                             EasyVipConfig.VipTierDefinition tierDef, Map<String, String> ctx, String source) {
+        if (tierDef == null) {
+            return;
+        }
+
+        if (tierDef.actionsOnExpire != null && !tierDef.actionsOnExpire.isEmpty()) {
+            executeTierActions(server, uuid, playerName, player, tierDef.actionsOnExpire, ctx, source + "_legacy");
+        }
+
+        if (tierDef.commands != null && tierDef.commands.expire != null && !tierDef.commands.expire.isEmpty()) {
+            executeServerCommandList(server, uuid, player, playerName, tierDef.commands.expire, ctx, source + "_commands");
+        }
+
+        if (player != null && tierDef.messages != null && tierDef.messages.expired != null && !tierDef.messages.expired.isEmpty()) {
+            player.sendSystemMessage(Component.literal(
+                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + tierDef.messages.expired, ctx)
+            ));
+        }
+    }
+
+    private static void executeActivationItems(MinecraftServer server, ServerPlayer player, EasyVipConfig.VipTierDefinition tierDef,
+                                               Map<String, String> ctx, String source) {
+        if (server == null || player == null || tierDef == null || tierDef.activationItems.isEmpty()) {
+            return;
+        }
+
+        String broadcastTemplate = (tierDef.messages != null && tierDef.messages.rareItemBroadcast != null && !tierDef.messages.rareItemBroadcast.isEmpty())
+                ? tierDef.messages.rareItemBroadcast
+                : EasyVipConfig.messages.vipLuckyItemBroadcast;
+
+        for (EasyVipConfig.VipActivationItemDefinition itemDef : tierDef.activationItems) {
+            if (itemDef == null || itemDef.stackSnbt == null || itemDef.stackSnbt.isBlank()) {
+                continue;
+            }
+
+            double chance = Math.max(0.0d, Math.min(100.0d, itemDef.chance));
+            boolean awarded = chanceSucceeded(chance, ThreadLocalRandom.current().nextDouble(100.0d));
+            if (!awarded) {
+                continue;
+            }
+
+            ItemStack stack = parseActivationItemStack(server, itemDef.stackSnbt);
+            if (stack.isEmpty()) {
+                continue;
+            }
+
+            player.getInventory().add(stack);
+
+            if (chance < 100.0d && server.getPlayerList() != null) {
+                Map<String, String> luckyCtx = new HashMap<>(ctx);
+                luckyCtx.put("item_name", stack.getHoverName().getString());
+                luckyCtx.put("chance", formatChance(chance));
+                String message = ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + broadcastTemplate, luckyCtx);
+                server.getPlayerList().broadcastSystemMessage(Component.literal(message), false);
+            }
+        }
+    }
+
+    static boolean chanceSucceeded(double chance, double roll) {
+        if (chance >= 100.0d) {
+            return true;
+        }
+        if (chance <= 0.0d) {
+            return false;
+        }
+        return roll < chance;
+    }
+
+    private static ItemStack parseActivationItemStack(MinecraftServer server, String stackSnbt) {
+        try {
+            CompoundTag tag = NbtUtils.snbtToStructure(stackSnbt);
+            ItemStack stack = ItemStack.parseOptional(server.registryAccess(), tag);
+            return stack != null ? stack : ItemStack.EMPTY;
+        } catch (Exception e) {
+            if (EasyVipConfig.common.debug) {
+                e.printStackTrace();
+            }
+            return ItemStack.EMPTY;
+        }
+    }
+
+    private static void executeServerCommandList(MinecraftServer server, UUID uuid, ServerPlayer player, String playerName,
+                                                 List<String> commands, Map<String, String> ctx, String source) {
+        if (server == null || commands == null || commands.isEmpty()) {
+            return;
+        }
+
+        List<Map<String, Object>> actions = new ArrayList<>();
+        for (String command : commands) {
+            if (command == null || command.trim().isEmpty()) {
+                continue;
+            }
+            Map<String, Object> action = new LinkedHashMap<>();
+            action.put("type", "run_server_command");
+            action.put("command", command);
+            actions.add(action);
+        }
+
+        if (!actions.isEmpty()) {
+            executeTierActions(server, uuid, playerName, player, actions, ctx, source);
+        }
+    }
+
+    private static String formatChance(double chance) {
+        if (chance == Math.rint(chance)) {
+            return String.valueOf((long) chance);
+        }
+        return String.valueOf(chance);
+    }
+
+    private static String formatTimestamp(long millis) {
+        if (millis < 0) {
+            return EasyVipConfig.messages.durationPermanent;
+        }
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneId.systemDefault())
+                .format(Instant.ofEpochMilli(millis));
+    }
+
+    private static String formatDays(long millis) {
+        if (millis < 0) {
+            return EasyVipConfig.messages.durationPermanent;
+        }
+        long days = millis / (24L * 60L * 60L * 1000L);
+        return String.valueOf(Math.max(0L, days));
+    }
+
+    private static void enrichVipContext(Map<String, String> ctx, UUID uuid, String playerName,
+                                          EasyVipConfig.VipTierDefinition tierDef, long durationMillis,
+                                          long startTime, long expiryTime) {
+        if (ctx == null) {
+            return;
+        }
+
+        ctx.put("uuid", uuid.toString());
+        ctx.put("player_uuid", uuid.toString());
+        ctx.put("player", playerName);
+        if (tierDef != null) {
+            ctx.put("vip_id", tierDef.id);
+            ctx.put("vip_name", tierDef.displayName);
+            ctx.put("tier_id", tierDef.id);
+            ctx.put("tier_display", tierDef.displayName);
+        }
+        if (!ctx.containsKey("duration")) {
+            ctx.put("duration", durationMillis == -1 ? EasyVipConfig.messages.durationPermanent : DurationParser.formatDuration(durationMillis));
+        }
+        ctx.put("days", formatDays(durationMillis));
+        ctx.put("activation_date", formatTimestamp(startTime));
+        ctx.put("expiration_date", formatTimestamp(expiryTime));
+        long remainingMillis = expiryTime < 0 ? -1 : Math.max(0L, expiryTime - System.currentTimeMillis());
+        ctx.put("remaining_days", formatDays(remainingMillis));
+        ctx.put("remaining_time", remainingMillis < 0 ? EasyVipConfig.messages.durationPermanent : DurationParser.formatDuration(remainingMillis));
     }
 
     public static boolean removeVip(MinecraftServer server, UUID uuid, String tierId, String operator) {
@@ -387,15 +569,12 @@ public final class VipService {
                 ctx.put("player_uuid", uuid.toString());
 
                 if (tierDef != null) {
+                    long originalDuration = record.getExpiryTime() == -1 ? -1 : (record.getExpiryTime() - record.getStartTime());
+                    enrichVipContext(ctx, uuid, playerName, tierDef, originalDuration, record.getStartTime(), record.getExpiryTime());
                     if (record.isActive()) {
                         executeUnsetActiveActions(server, uuid, player, record.getTierId(), tierDef, ctx, "vip_expire_unset_active");
                     }
-                    executeTierActions(server, uuid, playerName, player, tierDef.actionsOnExpire, ctx, "vip_expire");
-                    if (player != null) {
-                        player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipExpired, ctx)
-                        ));
-                    }
+                    executeVipExpireFlow(server, uuid, player, playerName, tierDef, ctx, "vip_expire");
                 }
 
                 PersistenceManager.log("System", "vip_expired", "VIP tier " + record.getTierId() + " expired for " + playerName);
@@ -438,11 +617,8 @@ public final class VipService {
                     ctx.put("duration", formattedDuration);
                     ctx.put("player", player.getGameProfile().getName());
                     ctx.put("player_uuid", uuid.toString());
-                    executeTierActions(server, uuid, player.getGameProfile().getName(), player, tierDef.actionsOnActivate, ctx, "vip_pending_activate");
-
-                    player.sendSystemMessage(Component.literal(
-                            ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipActivated, ctx)
-                    ));
+                    enrichVipContext(ctx, uuid, player.getGameProfile().getName(), tierDef, remaining, record.getStartTime(), record.getExpiryTime());
+                    executeVipActivationFlow(server, uuid, player, player.getGameProfile().getName(), tierDef, ctx, "vip_pending_activate", tierDef.messages.activated);
                     broadcastVipActivation(server, player.getGameProfile().getName(), tierDef.displayName);
                 }
                 record.setPendingActivateActions(false);

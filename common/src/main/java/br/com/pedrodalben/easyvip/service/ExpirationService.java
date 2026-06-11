@@ -49,6 +49,11 @@ public final class ExpirationService {
         }, interval, interval, TimeUnit.SECONDS);
     }
 
+    public static synchronized void reload(MinecraftServer server) {
+        stop();
+        start(server);
+    }
+
     public static synchronized void stop() {
         if (scheduler != null) {
             scheduler.shutdown();

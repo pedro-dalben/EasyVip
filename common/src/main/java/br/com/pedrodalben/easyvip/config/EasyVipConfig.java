@@ -57,7 +57,7 @@ public final class EasyVipConfig {
         public boolean logToFile = true;
         public boolean debug = false;
         public boolean commandAllowlistEnabled = true;
-        public List<String> commandAllowlist = Arrays.asList("ftbranks ", "team ", "effect ", "give ");
+        public List<String> commandAllowlist = Arrays.asList("ftbranks ", "team ", "effect ", "give ", "broadcast ");
     }
 
     private static void loadCommon() throws IllegalArgumentException, IOException {
@@ -149,6 +149,7 @@ public final class EasyVipConfig {
         public String reloadError = "&cErro ao recarregar configurações: {error}";
         public String configInvalid = "&cConfiguração inválida encontrada.";
         public String vipActivatedBroadcast = "&6[&eEasyVip&6] &aO player &e{player} &aativou o VIP &b{tier_display}&a. Parabéns!";
+        public String vipLuckyItemBroadcast = "&6[&eEasyVip&6] &e%player% &6ganhou um item lendário ao ativar o VIP &b%tier_display%&6!";
         public String durationPermanent = "permanente";
     }
 
@@ -190,6 +191,7 @@ public final class EasyVipConfig {
             map.put("reload_error", messages.reloadError);
             map.put("config_invalid", messages.configInvalid);
             map.put("vip_activated_broadcast", messages.vipActivatedBroadcast);
+            map.put("vip_lucky_item_broadcast", messages.vipLuckyItemBroadcast);
             map.put("duration_permanent", messages.durationPermanent);
             TomlWriter.writeFile(file, map);
         }
@@ -228,12 +230,38 @@ public final class EasyVipConfig {
         messages.reloadError = getString(data, "reload_error", messages.reloadError);
         messages.configInvalid = getString(data, "config_invalid", messages.configInvalid);
         messages.vipActivatedBroadcast = getString(data, "vip_activated_broadcast", messages.vipActivatedBroadcast);
+        messages.vipLuckyItemBroadcast = getString(data, "vip_lucky_item_broadcast", messages.vipLuckyItemBroadcast);
         messages.durationPermanent = getString(data, "duration_permanent", messages.durationPermanent);
     }
 
     // ─── Tiers Config ───────────────────────────────────────
     public static class TiersConfig {
         public final Map<String, VipTierDefinition> list = new LinkedHashMap<>();
+        public final VipDefaultsConfig defaults = new VipDefaultsConfig();
+    }
+
+    public static class VipDefaultsConfig {
+        public String duration = "30d";
+        public boolean stacking = true;
+        public String activationMode = "extend";
+        public final VipMessagesConfig messages = new VipMessagesConfig();
+        public final VipCommandsConfig commands = new VipCommandsConfig();
+    }
+
+    public static class VipMessagesConfig {
+        public String activated = "";
+        public String expired = "";
+        public String rareItemBroadcast = "";
+    }
+
+    public static class VipCommandsConfig {
+        public List<String> activate = new ArrayList<>();
+        public List<String> expire = new ArrayList<>();
+    }
+
+    public static class VipActivationItemDefinition {
+        public String stackSnbt;
+        public double chance = 100.0;
     }
 
     public static class VipTierDefinition {
@@ -246,6 +274,9 @@ public final class EasyVipConfig {
         public String activationMode = "extend";
         public long maxStackDurationSeconds = 0;
         public String color = "white";
+        public final VipMessagesConfig messages = new VipMessagesConfig();
+        public final VipCommandsConfig commands = new VipCommandsConfig();
+        public final List<VipActivationItemDefinition> activationItems = new ArrayList<>();
         public List<Map<String, Object>> actionsOnActivate = new ArrayList<>();
         public List<Map<String, Object>> actionsOnExpire = new ArrayList<>();
         public List<Map<String, Object>> actionsOnRemove = new ArrayList<>();
@@ -260,36 +291,151 @@ public final class EasyVipConfig {
             TomlWriter.writeFile(file, buildTiersToml(language));
         }
 
+        resetTierDefaults(language);
+
         Map<String, Object> parsed = TomlParser.parseFile(file);
         tiers.list.clear();
-        Object tiersObj = parsed.get("tiers");
-        if (tiersObj instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> tiersMap = (Map<String, Object>) tiersObj;
-            for (Map.Entry<String, Object> entry : tiersMap.entrySet()) {
-                if (entry.getValue() instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> tierData = (Map<String, Object>) entry.getValue();
-                    VipTierDefinition def = new VipTierDefinition();
-                    def.id = entry.getKey();
-                    def.displayName = getString(tierData, "display_name", def.id);
-                    def.description = getString(tierData, "description", "");
-                    def.priority = getInt(tierData, "priority", 0);
-                    def.defaultDuration = getString(tierData, "default_duration", "30d");
-                    def.allowStacking = getBoolean(tierData, "allow_stacking", true);
-                    def.activationMode = getString(tierData, "activation_mode", "extend");
-                    def.maxStackDurationSeconds = getLong(tierData, "max_stack_duration_seconds", 0);
-                    def.color = getString(tierData, "color", "white");
-                    def.actionsOnActivate = getActionList(tierData, "actions_on_activate");
-                    def.actionsOnExpire = getActionList(tierData, "actions_on_expire");
-                    def.actionsOnRemove = getActionList(tierData, "actions_on_remove");
-                    def.actionsOnSetActive = getActionList(tierData, "actions_on_set_active");
-                    def.actionsOnUnsetActive = getActionList(tierData, "actions_on_unset_active");
 
-                    tiers.list.put(def.id, def);
-                }
+        if (parsed.containsKey("vips")) {
+            loadSimplifiedTiers(parsed);
+        } else if (parsed.containsKey("tiers")) {
+            loadLegacyTiers(parsed);
+        } else {
+            loadLegacyTiers(parsed);
+        }
+    }
+
+    private static void resetTierDefaults(String language) {
+        tiers.defaults.duration = "30d";
+        tiers.defaults.stacking = true;
+        tiers.defaults.activationMode = common.defaultActivationMode != null ? common.defaultActivationMode : "extend";
+        tiers.defaults.messages.activated = localized(language,
+                "&a%player% activated VIP %vip_name% for %duration%.",
+                "&a%player% ativou o VIP %vip_name% por %duration%.");
+        tiers.defaults.messages.expired = localized(language,
+                "&cYour VIP %vip_name% expired.",
+                "&cSeu VIP %vip_name% expirou.");
+        tiers.defaults.messages.rareItemBroadcast = localized(language,
+                "&6%player% won a legendary item while activating VIP %vip_name%!",
+                "&6%player% ganhou um item lendário ao ativar o VIP %vip_name%!");
+        tiers.defaults.commands.activate = new ArrayList<>();
+        tiers.defaults.commands.expire = new ArrayList<>();
+    }
+
+    private static void loadSimplifiedTiers(Map<String, Object> parsed) {
+        Map<String, Object> defaultsData = asMap(parsed.get("defaults"));
+        if (defaultsData != null) {
+            tiers.defaults.duration = getString(defaultsData, "duration", tiers.defaults.duration);
+            tiers.defaults.stacking = getBoolean(defaultsData, "stacking", tiers.defaults.stacking);
+            tiers.defaults.activationMode = getString(defaultsData, "activation_mode", tiers.defaults.activationMode);
+
+            Map<String, Object> messagesData = asMap(defaultsData.get("messages"));
+            if (messagesData != null) {
+                tiers.defaults.messages.activated = getString(messagesData, "activated", tiers.defaults.messages.activated);
+                tiers.defaults.messages.expired = getString(messagesData, "expired", tiers.defaults.messages.expired);
+                tiers.defaults.messages.rareItemBroadcast = getString(messagesData, "rare_item_broadcast", tiers.defaults.messages.rareItemBroadcast);
+            }
+
+            Map<String, Object> commandsData = asMap(defaultsData.get("commands"));
+            if (commandsData != null) {
+                tiers.defaults.commands.activate = getStringList(commandsData, "activate", tiers.defaults.commands.activate);
+                tiers.defaults.commands.expire = getStringList(commandsData, "expire", tiers.defaults.commands.expire);
             }
         }
+
+        Map<String, Object> vipsData = asMap(parsed.get("vips"));
+        if (vipsData == null) {
+            return;
+        }
+
+        int index = 0;
+        for (Map.Entry<String, Object> entry : vipsData.entrySet()) {
+            Map<String, Object> vipData = asMap(entry.getValue());
+            if (vipData == null) {
+                continue;
+            }
+
+            VipTierDefinition def = new VipTierDefinition();
+            def.id = entry.getKey();
+            applyVipDefaults(def, index++);
+
+            def.displayName = getString(vipData, "display_name", def.id);
+            def.description = getString(vipData, "description", def.description);
+            def.priority = getInt(vipData, "priority", def.priority);
+            def.defaultDuration = getString(vipData, "default_duration", def.defaultDuration);
+            def.allowStacking = getBoolean(vipData, "allow_stacking", def.allowStacking);
+            def.activationMode = getString(vipData, "activation_mode", def.activationMode);
+            def.maxStackDurationSeconds = getLong(vipData, "max_stack_duration_seconds", def.maxStackDurationSeconds);
+            def.color = getString(vipData, "color", def.color);
+
+            Map<String, Object> messagesData = asMap(vipData.get("messages"));
+            if (messagesData != null) {
+                def.messages.activated = getString(messagesData, "activated", def.messages.activated);
+                def.messages.expired = getString(messagesData, "expired", def.messages.expired);
+                def.messages.rareItemBroadcast = getString(messagesData, "rare_item_broadcast", def.messages.rareItemBroadcast);
+            }
+
+            Map<String, Object> commandsData = asMap(vipData.get("commands"));
+            if (commandsData != null) {
+                def.commands.activate = getStringList(commandsData, "activate", def.commands.activate);
+                def.commands.expire = getStringList(commandsData, "expire", def.commands.expire);
+            }
+
+            def.activationItems.addAll(parseActivationItems(vipData.get("activation_items")));
+
+            def.actionsOnActivate = getActionList(vipData, "actions_on_activate");
+            def.actionsOnExpire = getActionList(vipData, "actions_on_expire");
+            def.actionsOnRemove = getActionList(vipData, "actions_on_remove");
+            def.actionsOnSetActive = getActionList(vipData, "actions_on_set_active");
+            def.actionsOnUnsetActive = getActionList(vipData, "actions_on_unset_active");
+
+            tiers.list.put(def.id, def);
+        }
+    }
+
+    private static void loadLegacyTiers(Map<String, Object> parsed) {
+        Map<String, Object> tiersObj = asMap(parsed.get("tiers"));
+        if (tiersObj == null) {
+            return;
+        }
+
+        int index = 0;
+        for (Map.Entry<String, Object> entry : tiersObj.entrySet()) {
+            Map<String, Object> tierData = asMap(entry.getValue());
+            if (tierData == null) {
+                continue;
+            }
+
+            VipTierDefinition def = new VipTierDefinition();
+            def.id = entry.getKey();
+            def.displayName = getString(tierData, "display_name", def.id);
+            def.description = getString(tierData, "description", "");
+            def.priority = getInt(tierData, "priority", (index + 1) * 10);
+            def.defaultDuration = getString(tierData, "default_duration", tiers.defaults.duration);
+            def.allowStacking = getBoolean(tierData, "allow_stacking", tiers.defaults.stacking);
+            def.activationMode = getString(tierData, "activation_mode", tiers.defaults.activationMode);
+            def.maxStackDurationSeconds = getLong(tierData, "max_stack_duration_seconds", 0);
+            def.color = getString(tierData, "color", "white");
+            def.actionsOnActivate = getActionList(tierData, "actions_on_activate");
+            def.actionsOnExpire = getActionList(tierData, "actions_on_expire");
+            def.actionsOnRemove = getActionList(tierData, "actions_on_remove");
+            def.actionsOnSetActive = getActionList(tierData, "actions_on_set_active");
+            def.actionsOnUnsetActive = getActionList(tierData, "actions_on_unset_active");
+            tiers.list.put(def.id, def);
+            index++;
+        }
+    }
+
+    private static void applyVipDefaults(VipTierDefinition def, int index) {
+        def.priority = (index + 1) * 10;
+        def.defaultDuration = tiers.defaults.duration;
+        def.allowStacking = tiers.defaults.stacking;
+        def.activationMode = tiers.defaults.activationMode;
+        def.messages.activated = tiers.defaults.messages.activated;
+        def.messages.expired = tiers.defaults.messages.expired;
+        def.messages.rareItemBroadcast = tiers.defaults.messages.rareItemBroadcast;
+        def.commands.activate = new ArrayList<>(tiers.defaults.commands.activate);
+        def.commands.expire = new ArrayList<>(tiers.defaults.commands.expire);
     }
 
     public static synchronized void saveTiers() throws IOException {
@@ -299,77 +445,154 @@ public final class EasyVipConfig {
 
     private static Map<String, Object> buildTiersToml(String language) {
         Map<String, Object> map = new LinkedHashMap<>();
-        Map<String, Object> tiersMap = new LinkedHashMap<>();
-        map.put("tiers", tiersMap);
+
+        Map<String, Object> defaults = new LinkedHashMap<>();
+        defaults.put("duration", tiers.defaults.duration);
+        defaults.put("stacking", tiers.defaults.stacking);
+        defaults.put("activation_mode", tiers.defaults.activationMode);
+
+        Map<String, Object> defaultMessages = new LinkedHashMap<>();
+        defaultMessages.put("activated", tiers.defaults.messages.activated.isEmpty()
+                ? localized(language, "&a%player% activated VIP %vip_name% for %duration%.", "&a%player% ativou o VIP %vip_name% por %duration%.")
+                : tiers.defaults.messages.activated);
+        defaultMessages.put("expired", tiers.defaults.messages.expired.isEmpty()
+                ? localized(language, "&cYour VIP %vip_name% expired.", "&cSeu VIP %vip_name% expirou.")
+                : tiers.defaults.messages.expired);
+        defaultMessages.put("rare_item_broadcast", tiers.defaults.messages.rareItemBroadcast.isEmpty()
+                ? localized(language, "&6%player% won a legendary item while activating VIP %vip_name%!", "&6%player% ganhou um item lendário ao ativar o VIP %vip_name%!")
+                : tiers.defaults.messages.rareItemBroadcast);
+        defaults.put("messages", defaultMessages);
+
+        Map<String, Object> defaultCommands = new LinkedHashMap<>();
+        defaultCommands.put("activate", new ArrayList<>(tiers.defaults.commands.activate));
+        defaultCommands.put("expire", new ArrayList<>(tiers.defaults.commands.expire));
+        defaults.put("commands", defaultCommands);
+
+        map.put("defaults", defaults);
+
+        Map<String, Object> vipsMap = new LinkedHashMap<>();
+        map.put("vips", vipsMap);
 
         if (tiers.list.isEmpty()) {
-            // Default VIP
-            Map<String, Object> vip = new LinkedHashMap<>();
-            vip.put("display_name", localized(language, "VIP", "VIP"));
-            vip.put("priority", 10);
-            vip.put("default_duration", "30d");
-            vip.put("allow_stacking", true);
-            vip.put("activation_mode", "extend");
-            vip.put("color", "gold");
-
-            List<Map<String, Object>> actActivate = new ArrayList<>();
-            Map<String, Object> msgAct = new LinkedHashMap<>();
-            msgAct.put("type", "send_message");
-            msgAct.put("message", localized(language,
-                    "&aYou activated VIP {tier_display} for {duration}.",
-                    "&aVocê ativou o VIP {tier_display} por {duration}."));
-            actActivate.add(msgAct);
-
-            Map<String, Object> itemAct = new LinkedHashMap<>();
-            itemAct.put("type", "give_item");
-            itemAct.put("item", "minecraft:diamond");
-            itemAct.put("amount", 3);
-            actActivate.add(itemAct);
-
-            vip.put("actions_on_activate", actActivate);
-
-            List<Map<String, Object>> actExpire = new ArrayList<>();
-            Map<String, Object> msgExp = new LinkedHashMap<>();
-            msgExp.put("type", "send_message");
-            msgExp.put("message", localized(language,
-                    "&cYour VIP {tier_display} expired.",
-                    "&cSeu VIP {tier_display} expirou."));
-            actExpire.add(msgExp);
-            vip.put("actions_on_expire", actExpire);
-
-            tiersMap.put("vip", vip);
-
-            // Default VIP+
-            Map<String, Object> vipPlus = new LinkedHashMap<>();
-            vipPlus.put("display_name", localized(language, "VIP+", "VIP+"));
-            vipPlus.put("priority", 20);
-            vipPlus.put("default_duration", "30d");
-            vipPlus.put("allow_stacking", true);
-            vipPlus.put("activation_mode", "extend");
-            vipPlus.put("color", "aqua");
-            tiersMap.put("vip_plus", vipPlus);
+            vipsMap.put("pokeball", buildVipToml(sampleVip("Pokeball", "red", 10)));
+            vipsMap.put("ultraball", buildVipToml(sampleVip("Ultra Ball", "yellow", 20)));
+            vipsMap.put("masterball", buildVipToml(sampleVip("Master Ball", "light_purple", 30)));
             return map;
         }
 
         for (VipTierDefinition def : tiers.list.values()) {
-            Map<String, Object> tier = new LinkedHashMap<>();
-            tier.put("display_name", def.displayName);
-            tier.put("description", def.description);
-            tier.put("priority", def.priority);
-            tier.put("default_duration", def.defaultDuration);
-            tier.put("allow_stacking", def.allowStacking);
-            tier.put("activation_mode", def.activationMode);
-            tier.put("max_stack_duration_seconds", def.maxStackDurationSeconds);
-            tier.put("color", def.color);
-            tier.put("actions_on_activate", new ArrayList<>(def.actionsOnActivate));
-            tier.put("actions_on_expire", new ArrayList<>(def.actionsOnExpire));
-            tier.put("actions_on_remove", new ArrayList<>(def.actionsOnRemove));
-            tier.put("actions_on_set_active", new ArrayList<>(def.actionsOnSetActive));
-            tier.put("actions_on_unset_active", new ArrayList<>(def.actionsOnUnsetActive));
-            tiersMap.put(def.id, tier);
+            vipsMap.put(def.id, buildVipToml(def));
         }
 
         return map;
+    }
+
+    private static VipTierDefinition sampleVip(String displayName, String color, int priority) {
+        VipTierDefinition def = new VipTierDefinition();
+        def.id = displayName.toLowerCase(Locale.ROOT).replace(" ", "");
+        def.displayName = displayName;
+        def.color = color;
+        def.priority = priority;
+        def.defaultDuration = tiers.defaults.duration;
+        def.allowStacking = tiers.defaults.stacking;
+        def.activationMode = tiers.defaults.activationMode;
+        def.messages.activated = tiers.defaults.messages.activated;
+        def.messages.expired = tiers.defaults.messages.expired;
+        def.messages.rareItemBroadcast = tiers.defaults.messages.rareItemBroadcast;
+        return def;
+    }
+
+    private static Map<String, Object> buildVipToml(VipTierDefinition def) {
+        Map<String, Object> tier = new LinkedHashMap<>();
+        if (def == null) {
+            return tier;
+        }
+
+        tier.put("display_name", def.displayName != null ? def.displayName : def.id);
+        tier.put("priority", def.priority);
+        if (def.description != null && !def.description.isEmpty()) {
+            tier.put("description", def.description);
+        }
+        if (def.defaultDuration != null && !def.defaultDuration.isEmpty() && !def.defaultDuration.equals(tiers.defaults.duration)) {
+            tier.put("default_duration", def.defaultDuration);
+        }
+        if (def.allowStacking != tiers.defaults.stacking) {
+            tier.put("allow_stacking", def.allowStacking);
+        }
+        if (def.activationMode != null && !def.activationMode.isEmpty() && !def.activationMode.equals(tiers.defaults.activationMode)) {
+            tier.put("activation_mode", def.activationMode);
+        }
+        if (def.maxStackDurationSeconds > 0) {
+            tier.put("max_stack_duration_seconds", def.maxStackDurationSeconds);
+        }
+        if (def.color != null && !def.color.isEmpty()) {
+            tier.put("color", def.color);
+        }
+
+        Map<String, Object> messagesMap = new LinkedHashMap<>();
+        if (def.messages != null) {
+            if (def.messages.activated != null && !def.messages.activated.isEmpty() && !def.messages.activated.equals(tiers.defaults.messages.activated)) {
+                messagesMap.put("activated", def.messages.activated);
+            }
+            if (def.messages.expired != null && !def.messages.expired.isEmpty() && !def.messages.expired.equals(tiers.defaults.messages.expired)) {
+                messagesMap.put("expired", def.messages.expired);
+            }
+            if (def.messages.rareItemBroadcast != null && !def.messages.rareItemBroadcast.isEmpty() && !def.messages.rareItemBroadcast.equals(tiers.defaults.messages.rareItemBroadcast)) {
+                messagesMap.put("rare_item_broadcast", def.messages.rareItemBroadcast);
+            }
+        }
+        if (!messagesMap.isEmpty()) {
+            tier.put("messages", messagesMap);
+        }
+
+        Map<String, Object> commandsMap = new LinkedHashMap<>();
+        if (def.commands != null) {
+            if (def.commands.activate != null && !def.commands.activate.isEmpty() && !def.commands.activate.equals(tiers.defaults.commands.activate)) {
+                commandsMap.put("activate", new ArrayList<>(def.commands.activate));
+            }
+            if (def.commands.expire != null && !def.commands.expire.isEmpty() && !def.commands.expire.equals(tiers.defaults.commands.expire)) {
+                commandsMap.put("expire", new ArrayList<>(def.commands.expire));
+            }
+        }
+        if (!commandsMap.isEmpty()) {
+            tier.put("commands", commandsMap);
+        }
+
+        if (def.activationItems != null && !def.activationItems.isEmpty()) {
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (VipActivationItemDefinition item : def.activationItems) {
+                if (item == null || item.stackSnbt == null || item.stackSnbt.isEmpty()) {
+                    continue;
+                }
+                Map<String, Object> itemMap = new LinkedHashMap<>();
+                itemMap.put("stack_snbt", item.stackSnbt);
+                if (item.chance < 100.0d) {
+                    itemMap.put("chance", item.chance);
+                }
+                items.add(itemMap);
+            }
+            if (!items.isEmpty()) {
+                tier.put("activation_items", items);
+            }
+        }
+
+        if (def.actionsOnActivate != null && !def.actionsOnActivate.isEmpty()) {
+            tier.put("actions_on_activate", new ArrayList<>(def.actionsOnActivate));
+        }
+        if (def.actionsOnExpire != null && !def.actionsOnExpire.isEmpty()) {
+            tier.put("actions_on_expire", new ArrayList<>(def.actionsOnExpire));
+        }
+        if (def.actionsOnRemove != null && !def.actionsOnRemove.isEmpty()) {
+            tier.put("actions_on_remove", new ArrayList<>(def.actionsOnRemove));
+        }
+        if (def.actionsOnSetActive != null && !def.actionsOnSetActive.isEmpty()) {
+            tier.put("actions_on_set_active", new ArrayList<>(def.actionsOnSetActive));
+        }
+        if (def.actionsOnUnsetActive != null && !def.actionsOnUnsetActive.isEmpty()) {
+            tier.put("actions_on_unset_active", new ArrayList<>(def.actionsOnUnsetActive));
+        }
+
+        return tier;
     }
 
     // ─── Packages Config ────────────────────────────────────
@@ -600,6 +823,13 @@ public final class EasyVipConfig {
                     "common.toml: default_activation_mode inválido: " + common.defaultActivationMode
             ));
         }
+        if (!tiers.defaults.activationMode.equals("extend") && !tiers.defaults.activationMode.equals("replace") &&
+            !tiers.defaults.activationMode.equals("stack") && !tiers.defaults.activationMode.equals("deny")) {
+            errors.add(localized(
+                    "tiers.toml: invalid defaults.activation_mode: " + tiers.defaults.activationMode,
+                    "tiers.toml: defaults.activation_mode inválido: " + tiers.defaults.activationMode
+            ));
+        }
         for (VipTierDefinition tier : tiers.list.values()) {
             if (tier.id == null || tier.id.trim().isEmpty()) {
                 errors.add(localized(
@@ -619,6 +849,21 @@ public final class EasyVipConfig {
                         "tiers.toml: invalid activation_mode for tier " + tier.id + ": " + tier.activationMode,
                         "tiers.toml: activation_mode inválido para o tier " + tier.id + ": " + tier.activationMode
                 ));
+            }
+            for (VipActivationItemDefinition item : tier.activationItems) {
+                if (item == null || item.stackSnbt == null || item.stackSnbt.trim().isEmpty()) {
+                    errors.add(localized(
+                            "tiers.toml: tier " + tier.id + " has an invalid activation item entry.",
+                            "tiers.toml: o tier " + tier.id + " possui uma entrada de item de ativação inválida."
+                    ));
+                    continue;
+                }
+                if (item.chance < 0.0d || item.chance > 100.0d) {
+                    errors.add(localized(
+                            "tiers.toml: tier " + tier.id + " has an activation item chance outside 0..100: " + item.chance,
+                            "tiers.toml: o tier " + tier.id + " possui chance de item de ativação fora de 0..100: " + item.chance
+                    ));
+                }
             }
         }
         for (PackageDefinition pkg : packages.list.values()) {
@@ -699,6 +944,7 @@ public final class EasyVipConfig {
         messages.reloadError = "&cError reloading settings: {error}";
         messages.configInvalid = "&cInvalid configuration found.";
         messages.vipActivatedBroadcast = "&6[&eEasyVip&6] &aPlayer &e{player} &aactivated VIP &b{tier_display}&a. Congratulations!";
+        messages.vipLuckyItemBroadcast = "&6[&eEasyVip&6] &e%player% &6won a legendary item while activating VIP &b%tier_display%&6!";
         messages.durationPermanent = "permanent";
     }
 
@@ -736,6 +982,7 @@ public final class EasyVipConfig {
         messages.reloadError = "&cErro ao recarregar configurações: {error}";
         messages.configInvalid = "&cConfiguração inválida encontrada.";
         messages.vipActivatedBroadcast = "&6[&eEasyVip&6] &aO player &e{player} &aativou o VIP &b{tier_display}&a. Parabéns!";
+        messages.vipLuckyItemBroadcast = "&6[&eEasyVip&6] &e%player% &6ganhou um item lendário ao ativar o VIP &b%tier_display%&6!";
         messages.durationPermanent = "permanente";
     }
 
@@ -809,6 +1056,51 @@ public final class EasyVipConfig {
                 if (o != null) list.add(o.toString());
             }
             return list;
+        }
+        return new ArrayList<>(def);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object obj) {
+        if (obj instanceof Map) {
+            return (Map<String, Object>) obj;
+        }
+        return null;
+    }
+
+    private static List<VipActivationItemDefinition> parseActivationItems(Object obj) {
+        List<VipActivationItemDefinition> items = new ArrayList<>();
+        if (!(obj instanceof List)) {
+            return items;
+        }
+
+        for (Object entry : (List<?>) obj) {
+            Map<String, Object> itemData = asMap(entry);
+            if (itemData == null) {
+                continue;
+            }
+
+            VipActivationItemDefinition item = new VipActivationItemDefinition();
+            item.stackSnbt = getString(itemData, "stack_snbt", getString(itemData, "stack", ""));
+            item.chance = getDouble(itemData, "chance", 100.0d);
+            if (item.stackSnbt != null && !item.stackSnbt.isEmpty()) {
+                items.add(item);
+            }
+        }
+
+        return items;
+    }
+
+    private static double getDouble(Map<String, Object> map, String key, double def) {
+        Object val = map.get(key);
+        if (val instanceof Number) {
+            return ((Number) val).doubleValue();
+        }
+        if (val != null) {
+            try {
+                return Double.parseDouble(val.toString());
+            } catch (NumberFormatException ignored) {
+            }
         }
         return def;
     }

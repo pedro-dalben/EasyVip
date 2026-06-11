@@ -23,8 +23,15 @@
 - `/easyvip variant pending` mostra pendências válidas; pendências expiradas são limpas pelo login e pelo scheduler.
 - `/easyvip variant clear` remove pendências manualmente.
 
+## Config
+
+- `/easyvip reload`
+- `/easyvip config reload` (alias)
+- `/easyvip config validate`
+
 ## Admin
 
+- `/easyvip createvip <id> <display_name> [color]`
 - `/easyvip admin addvip <player> <tier> <duration>`
 - `/easyvip admin removevip <player> <tier>`
 - `/easyvip admin savevipactivation <tier>`
@@ -39,3 +46,8 @@
 - `/easyvip package list`
 - `/easyvip package info <id>`
 - `/easyvip active set <player> <tier>`
+
+## Notes
+
+- `/easyvip createvip` cria um VIP novo sem alterar os tiers já existentes.
+- `/easyvip admin savevipactivation` grava o inventário atual em `activation_items`; a chance padrão é `100`, então você pode editar só os itens raros depois.

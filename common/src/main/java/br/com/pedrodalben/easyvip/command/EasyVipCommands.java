@@ -40,6 +40,20 @@ public final class EasyVipCommands {
                 .requires(src -> hasPermission(src, "easyvip.use"))
                 .executes(EasyVipCommands::executeHelp);
 
+        // /easyvip reload
+        root.then(Commands.literal("reload")
+                .requires(src -> hasPermission(src, "easyvip.admin"))
+                .executes(EasyVipCommands::executeConfigReload));
+
+        // /easyvip createvip <id> <display_name> [color]
+        root.then(Commands.literal("createvip")
+                .requires(src -> hasPermission(src, "easyvip.admin"))
+                .then(Commands.argument("id", StringArgumentType.word())
+                        .then(Commands.argument("display_name", StringArgumentType.string())
+                                .executes(EasyVipCommands::executeCreateVip)
+                                .then(Commands.argument("color", StringArgumentType.word())
+                                        .executes(EasyVipCommands::executeCreateVip)))));
+
         // ─── Player Subcommands ─────────────────────────────────
 
         // /easyvip use <key>
@@ -261,10 +275,12 @@ public final class EasyVipCommands {
 
         if (hasPermission(src, "easyvip.admin")) {
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin ... §8- §7" + EasyVipConfig.localized("administrative commands", "comandos administrativos")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip createvip <id> <display_name> [color] §8- §7" + EasyVipConfig.localized("create a new VIP definition", "criar uma nova definição de VIP")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip key ... §8- §7" + EasyVipConfig.localized("manage keys", "gerenciar chaves")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip package ... §8- §7" + EasyVipConfig.localized("manage packages", "gerenciar pacotes")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip active set <player> <tier> §8- §7" + EasyVipConfig.localized("change active VIP", "alterar VIP ativo")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin savevipactivation <tier> §8- §7" + EasyVipConfig.localized("save the current inventory as VIP activation items", "salvar o inventário atual como itens de ativação do VIP")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip reload §8- §7" + EasyVipConfig.localized("reload TOML configs without restarting", "recarregar os TOMLs sem reiniciar")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip config reload|validate §8- §7" + EasyVipConfig.localized("reload or validate config", "recarregar/validar config")), false);
         }
 
@@ -276,6 +292,86 @@ public final class EasyVipCommands {
             return PermissionBridge.hasPermission(player, node);
         }
         return true; // Console
+    }
+
+    private static int executeCreateVip(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String rawId = StringArgumentType.getString(ctx, "id").trim();
+        if (rawId.isEmpty()) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Invalid VIP ID.", "ID de VIP inválido.")));
+            return 0;
+        }
+
+        String id = rawId.toLowerCase(Locale.ROOT);
+        if (EasyVipConfig.tiers.list.containsKey(id)) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("This VIP already exists.", "Este VIP já existe.")));
+            return 0;
+        }
+
+        String displayName = StringArgumentType.getString(ctx, "display_name").trim();
+        if (displayName.isEmpty()) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Invalid VIP display name.", "Nome de exibição do VIP inválido.")));
+            return 0;
+        }
+
+        String color = "white";
+        try {
+            color = StringArgumentType.getString(ctx, "color").trim();
+            if (color.isEmpty()) {
+                color = "white";
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+
+        EasyVipConfig.VipTierDefinition def = new EasyVipConfig.VipTierDefinition();
+        def.id = id;
+        def.displayName = displayName;
+        def.color = color;
+        def.priority = nextVipPriority();
+        def.defaultDuration = EasyVipConfig.tiers.defaults.duration;
+        def.allowStacking = EasyVipConfig.tiers.defaults.stacking;
+        def.activationMode = EasyVipConfig.tiers.defaults.activationMode;
+        def.messages.activated = EasyVipConfig.tiers.defaults.messages.activated;
+        def.messages.expired = EasyVipConfig.tiers.defaults.messages.expired;
+        def.messages.rareItemBroadcast = EasyVipConfig.tiers.defaults.messages.rareItemBroadcast;
+        def.commands.activate = new ArrayList<>(EasyVipConfig.tiers.defaults.commands.activate);
+        def.commands.expire = new ArrayList<>(EasyVipConfig.tiers.defaults.commands.expire);
+
+        EasyVipConfig.tiers.list.put(id, def);
+        try {
+            EasyVipConfig.saveTiers();
+        } catch (IOException e) {
+            Map<String, String> context = new HashMap<>();
+            context.put("error", e.getMessage() != null ? e.getMessage() : "unknown");
+            src.sendFailure(Component.literal(
+                    ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.reloadError, context)
+            ));
+            return 0;
+        }
+
+        Map<String, String> context = new HashMap<>();
+        context.put("tier_display", def.displayName);
+        context.put("tier_id", def.id);
+        src.sendSuccess(() -> Component.literal(
+                ActionExecutor.resolvePlaceholders(
+                        EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "VIP {tier_display} created successfully.",
+                                "VIP {tier_display} criado com sucesso."
+                        ),
+                        context
+                )
+        ), true);
+        return 1;
+    }
+
+    private static int nextVipPriority() {
+        int max = 0;
+        for (EasyVipConfig.VipTierDefinition tier : EasyVipConfig.tiers.list.values()) {
+            if (tier != null && tier.priority > max) {
+                max = tier.priority;
+            }
+        }
+        return max > 0 ? max + 10 : 10;
     }
 
     // ─── Player Executions ──────────────────────────────────
@@ -555,22 +651,14 @@ public final class EasyVipCommands {
             return 0;
         }
 
-        List<Map<String, Object>> actions = captureVipActivationActions(player);
-        if (actions.isEmpty()) {
+        List<EasyVipConfig.VipActivationItemDefinition> items = captureVipActivationItems(player);
+        if (items.isEmpty()) {
             src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Your inventory is empty.", "Seu inventário está vazio.")));
             return 0;
         }
 
-        List<Map<String, Object>> updatedActions = new ArrayList<>();
-        for (Map<String, Object> action : tier.actionsOnActivate) {
-            Object typeObj = action.get("type");
-            String type = typeObj != null ? typeObj.toString() : "";
-            if (!type.equalsIgnoreCase("give_item") && !type.equalsIgnoreCase("give_item_stack")) {
-                updatedActions.add(new LinkedHashMap<>(action));
-            }
-        }
-        updatedActions.addAll(actions);
-        tier.actionsOnActivate = updatedActions;
+        tier.activationItems.clear();
+        tier.activationItems.addAll(items);
 
         try {
             EasyVipConfig.saveTiers();
@@ -585,7 +673,7 @@ public final class EasyVipCommands {
 
         Map<String, String> context = new HashMap<>();
         context.put("tier_display", tier.displayName != null ? tier.displayName : tier.id);
-        context.put("items", String.valueOf(actions.size()));
+        context.put("items", String.valueOf(tier.activationItems.size()));
         src.sendSuccess(() -> Component.literal(
                 ActionExecutor.resolvePlaceholders(
                         EasyVipConfig.messages.prefix + EasyVipConfig.localized(
@@ -598,25 +686,25 @@ public final class EasyVipCommands {
         return 1;
     }
 
-    private static List<Map<String, Object>> captureVipActivationActions(ServerPlayer player) {
-        List<Map<String, Object>> actions = new ArrayList<>();
-        captureStacks(player, actions, player.getInventory().items);
-        captureStacks(player, actions, player.getInventory().armor);
-        captureStacks(player, actions, player.getInventory().offhand);
-        return actions;
+    private static List<EasyVipConfig.VipActivationItemDefinition> captureVipActivationItems(ServerPlayer player) {
+        List<EasyVipConfig.VipActivationItemDefinition> items = new ArrayList<>();
+        captureStacks(player, items, player.getInventory().items);
+        captureStacks(player, items, player.getInventory().armor);
+        captureStacks(player, items, player.getInventory().offhand);
+        return items;
     }
 
-    private static void captureStacks(ServerPlayer player, List<Map<String, Object>> actions, List<ItemStack> stacks) {
+    private static void captureStacks(ServerPlayer player, List<EasyVipConfig.VipActivationItemDefinition> items, List<ItemStack> stacks) {
         for (ItemStack stack : stacks) {
             if (stack == null || stack.isEmpty()) {
                 continue;
             }
 
             CompoundTag tag = (CompoundTag) stack.copy().save(player.getServer().registryAccess());
-            Map<String, Object> action = new LinkedHashMap<>();
-            action.put("type", "give_item_stack");
-            action.put("stack_snbt", NbtUtils.structureToSnbt(tag));
-            actions.add(action);
+            EasyVipConfig.VipActivationItemDefinition item = new EasyVipConfig.VipActivationItemDefinition();
+            item.stackSnbt = NbtUtils.structureToSnbt(tag);
+            item.chance = 100.0d;
+            items.add(item);
         }
     }
 
@@ -998,6 +1086,10 @@ public final class EasyVipCommands {
         CommandSourceStack src = ctx.getSource();
         try {
             EasyVipConfig.loadAll();
+            var server = src.getServer();
+            if (server != null) {
+                ExpirationService.reload(server);
+            }
             src.sendSuccess(() -> Component.literal(
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.reloadSuccess, new HashMap<>())
             ), true);

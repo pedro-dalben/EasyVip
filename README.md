@@ -178,14 +178,19 @@ Exemplo:
 /easyvip admin addvip Pedro vip 30d
 ```
 
+#### `/easyvip createvip <id> <display_name> [color]`
+
+Cria uma nova definição de VIP sem alterar os tiers já existentes.
+O novo VIP herda os defaults de `tiers.toml` e só grava no arquivo o que realmente foi alterado.
+
 #### `/easyvip admin removevip <player> <tier>`
 
 Remove um tier VIP do jogador.
 
 #### `/easyvip admin savevipactivation <tier>`
 
-Salva o inventário atual do jogador online no `actions_on_activate` do tier informado.
-O comando preserva outras ações de ativação já existentes e substitui apenas as ações antigas de entrega de itens.
+Salva o inventário atual do jogador online em `activation_items` do tier informado.
+Cada item é gravado com `chance = 100` por padrão, então você pode ajustar manualmente os itens raros para `50`, `25` etc. sem mexer em mensagens ou comandos.
 
 #### `/easyvip admin generate vip <tier> <duration> [max_uses] [bound_player]`
 
@@ -249,9 +254,13 @@ Mostra o log de auditoria administrativo.
 
 ### Config
 
-#### `/easyvip config reload`
+#### `/easyvip reload`
 
 Recarrega os arquivos TOML sem reiniciar o servidor.
+
+Alias: `/easyvip config reload`.
+
+O scheduler de expiração também é reiniciado, então `auto_expire_interval_seconds` passa a valer imediatamente.
 
 #### `/easyvip config validate`
 
@@ -300,10 +309,12 @@ Notas importantes:
 - `variant_selection_timeout_seconds` controla por quanto tempo a escolha de variante fica pendente
 - `notify_pending_variant_on_login` só controla o aviso no login; a limpeza de expiradas continua ativa
 - `item_key_marker` precisa bater com o marcador gravado no item físico
+- `command_allowlist` já vem com `broadcast` por padrão para suportar anúncios de ativação nos VIPs
 
 ### `messages.toml`
 
 Todas as mensagens do mod, com suporte a `&` para cores.
+Os placeholders aceitam tanto `{placeholder}` quanto `%placeholder%`.
 
 Idioma suportado:
 
@@ -311,25 +322,56 @@ Idioma suportado:
 - `pt-br`
 
 O idioma padrão é `en-us`.
+O broadcast global de item raro usa `vip_lucky_item_broadcast`.
 
 ### `tiers.toml`
 
-Define os tiers VIP:
+Define os VIPs em um formato simples e legível.
 
-- `display_name`
-- `priority`
-- `default_duration`
-- `allow_stacking`
-- `activation_mode`
-- `max_stack_duration_seconds`
-- `color`
-- `actions_on_activate`
-- `actions_on_expire`
-- `actions_on_remove`
-- `actions_on_set_active`
-- `actions_on_unset_active`
+Exemplo:
 
-Você pode criar quantos tiers quiser, por exemplo `vip_esmeralda`, `vip_diamante` e `vip_ouro`.
+```toml
+[defaults]
+duration = "30d"
+stacking = true
+activation_mode = "extend"
+
+[defaults.messages]
+activated = "&a%player% ativou o VIP %vip_name% por %duration%."
+expired = "&cSeu VIP %vip_name% expirou."
+rare_item_broadcast = "&6%player% ganhou um item lendário ao ativar o VIP %vip_name%!"
+
+[defaults.commands]
+activate = ["broadcast %player% ativou o VIP %vip_name%"]
+expire = []
+
+[vips.pokeball]
+display_name = "Pokeball"
+color = "red"
+
+[[vips.pokeball.activation_items]]
+stack_snbt = "{id:\"minecraft:diamond\",Count:1b}"
+chance = 50
+```
+
+Campos mais usados:
+
+- `defaults.duration`
+- `defaults.stacking`
+- `defaults.activation_mode`
+- `defaults.messages.activated`
+- `defaults.messages.expired`
+- `defaults.messages.rare_item_broadcast`
+- `defaults.commands.activate`
+- `defaults.commands.expire`
+- `vips.<id>.display_name`
+- `vips.<id>.color`
+- `vips.<id>.priority`
+- `vips.<id>.activation_items`
+- `vips.<id>.activation_items.stack_snbt`
+- `vips.<id>.activation_items.chance`
+
+O campo `chance` é opcional e assume `100` por padrão. Os blocos antigos `actions_on_*` continuam sendo lidos por compatibilidade, mas o formato recomendado é o novo.
 
 ### `packages.toml`
 
@@ -366,25 +408,14 @@ Integrações opcionais:
 - `sql_password`
 
 O fluxo FTB Ranks usa templates de comando e passa pela allowlist de comandos do mod.
+Na configuração nova, isso normalmente é feito em `commands.activate` e `commands.expire`, sem precisar usar `actions_on_*`.
 
-## Integração FTB Ranks
-
-O easyVip não depende da API interna do FTB Ranks para mutação de rank.
-
-Ele usa actions seguras com allowlist:
+Exemplo de allowlist:
 
 ```toml
 [security]
 command_allowlist_enabled = true
 command_allowlist = ["ftbranks ", "team ", "effect ", "give "]
-```
-
-Exemplo:
-
-```toml
-[[tiers.vip.actions_on_activate]]
-type = "add_ftb_rank"
-rank = "vip"
 ```
 
 As templates padrão ficam em `integrations.toml` e geram comandos como:
@@ -461,6 +492,20 @@ Se habilitado em `integrations.toml`, o mod pode consultar permissões via LuckP
 ### FTB Ranks
 
 Se habilitado, o mod consulta permissões via FTB Ranks e pode aplicar/remover ranks por comando seguro.
+Na configuração nova, isso normalmente é feito em `commands.activate` e `commands.expire`, sem precisar usar `actions_on_*`.
+
+Exemplo:
+
+```toml
+[vips.vip]
+display_name = "VIP"
+
+[vips.vip.commands]
+activate = ["ftbranks add %player% vip"]
+expire = ["ftbranks remove %player% vip"]
+```
+
+Os blocos antigos `actions_on_*` ainda funcionam por compatibilidade, mas o formato acima é o recomendado.
 
 ### Fallback vanilla
 

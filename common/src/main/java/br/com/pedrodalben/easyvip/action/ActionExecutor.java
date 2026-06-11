@@ -355,7 +355,9 @@ public final class ActionExecutor {
         if (text == null) return "";
         String result = text;
         for (Map.Entry<String, String> entry : context.entrySet()) {
-            result = result.replace("{" + entry.getKey() + "}", entry.getValue());
+            String value = entry.getValue() != null ? entry.getValue() : "";
+            result = result.replace("{" + entry.getKey() + "}", value);
+            result = result.replace("%" + entry.getKey() + "%", value);
         }
         return result.replace('&', '§');
     }

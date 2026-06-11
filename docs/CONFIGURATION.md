@@ -30,9 +30,11 @@
 - `command_cooldown_ticks` applies to `/easyvip use`, `/easyvip activate`, `/usekey`, `/activate`, `/vip` and `/easyvip confirm` per player.
 - `allowed_dimensions` is a positive allowlist for reward/VIP use.
 - `deny_dimensions` wins over `allowed_dimensions` if both match.
+- `auto_expire_interval_seconds` controls the expiration scheduler interval and is reapplied on server start or `/easyvip reload`.
 - `variant_selection_timeout_seconds` controls how long a package variant choice stays pending.
 - `notify_pending_variant_on_login` only toggles the login reminder; expiration cleanup still runs.
 - `item_key_marker` is required on the physical item payload so a generic item with NBT is not accepted.
+- The default `command_allowlist` already includes `broadcast`, so VIP command lists can announce activations without extra setup.
 
 ### Language
 
@@ -66,6 +68,25 @@ These are implemented and enforced during reward key redemption.
 - `ftb_ranks_set_command`
 
 The FTB Ranks actions are command-template driven and still pass through the command allowlist.
+
+### `messages.toml`
+
+- `vip_lucky_item_broadcast`
+
+This message is used when a VIP activation item with chance below `100` is awarded.
+
+### `tiers.toml`
+
+The simplified VIP schema uses:
+
+- `[defaults]` for shared duration, stacking and activation mode
+- `[defaults.messages]` for the activated, expired and rare-item broadcast texts
+- `[defaults.commands]` for shared activate/expire command lists
+- `[vips.<id>]` for the per-VIP display name and color
+- `[[vips.<id>.activation_items]]` for activation kit items and their `chance`
+
+`chance` is optional and defaults to `100`.
+The legacy `actions_on_*` sections are still parsed for compatibility, but the simplified schema above is the recommended format.
 
 ## Reserved
 
