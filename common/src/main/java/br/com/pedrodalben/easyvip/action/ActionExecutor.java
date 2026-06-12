@@ -353,11 +353,17 @@ public final class ActionExecutor {
 
     public static String resolvePlaceholders(String text, Map<String, String> context) {
         if (text == null) return "";
-        String result = text;
+        if (context == null) {
+            context = Collections.emptyMap();
+        }
+        String result = RandomPoolService.resolveRandomPlaceholders(text);
         for (Map.Entry<String, String> entry : context.entrySet()) {
             String value = entry.getValue() != null ? entry.getValue() : "";
             result = result.replace("{" + entry.getKey() + "}", value);
             result = result.replace("%" + entry.getKey() + "%", value);
+            if (entry.getKey().startsWith("var.")) {
+                result = result.replace("$" + entry.getKey().substring(4), value);
+            }
         }
         return result.replace('&', '§');
     }

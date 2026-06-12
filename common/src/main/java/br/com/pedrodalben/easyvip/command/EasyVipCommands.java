@@ -18,8 +18,10 @@ import br.com.pedrodalben.easyvip.util.DurationParser;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.GameProfileArgument;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtUtils;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
@@ -249,6 +251,12 @@ public final class EasyVipCommands {
                 .then(Commands.argument("tier", StringArgumentType.word())
                         .executes(EasyVipCommands::executeSaveVipActivation)));
 
+        // /easyvip savevipactivation <tier> (alias)
+        root.then(Commands.literal("savevipactivation")
+                .requires(src -> hasPermission(src, "easyvip.admin"))
+                .then(Commands.argument("tier", StringArgumentType.word())
+                        .executes(EasyVipCommands::executeSaveVipActivation)));
+
         // /easyvip time [player]
         root.then(Commands.literal("time")
                 .executes(ctx -> executeInfo(ctx, null))
@@ -279,7 +287,7 @@ public final class EasyVipCommands {
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip key ... §8- §7" + EasyVipConfig.localized("manage keys", "gerenciar chaves")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip package ... §8- §7" + EasyVipConfig.localized("manage packages", "gerenciar pacotes")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip active set <player> <tier> §8- §7" + EasyVipConfig.localized("change active VIP", "alterar VIP ativo")), false);
-            src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin savevipactivation <tier> §8- §7" + EasyVipConfig.localized("save the current inventory as VIP activation items", "salvar o inventário atual como itens de ativação do VIP")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip savevipactivation <tier> §8- §7" + EasyVipConfig.localized("save the current inventory as VIP activation items", "salvar o inventário atual como itens de ativação do VIP")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip reload §8- §7" + EasyVipConfig.localized("reload TOML configs without restarting", "recarregar os TOMLs sem reiniciar")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip config reload|validate §8- §7" + EasyVipConfig.localized("reload or validate config", "recarregar/validar config")), false);
         }
@@ -661,7 +669,7 @@ public final class EasyVipCommands {
         tier.activationItems.addAll(items);
 
         try {
-            EasyVipConfig.saveTiers();
+            EasyVipConfig.saveActivationItems(tier.id);
         } catch (IOException e) {
             Map<String, String> context = new HashMap<>();
             context.put("error", e.getMessage() != null ? e.getMessage() : "unknown");
@@ -673,12 +681,13 @@ public final class EasyVipCommands {
 
         Map<String, String> context = new HashMap<>();
         context.put("tier_display", tier.displayName != null ? tier.displayName : tier.id);
+        context.put("tier_id", tier.id);
         context.put("items", String.valueOf(tier.activationItems.size()));
         src.sendSuccess(() -> Component.literal(
                 ActionExecutor.resolvePlaceholders(
                         EasyVipConfig.messages.prefix + EasyVipConfig.localized(
-                                "Saved {items} item(s) from your inventory into VIP {tier_display}.",
-                                "Salvei {items} item(ns) do seu inventário no VIP {tier_display}."
+                                "Saved {items} item(s) into activation_items/{tier_id}.toml.",
+                                "Salvei {items} item(ns) em activation_items/{tier_id}.toml."
                         ),
                         context
                 )
@@ -700,8 +709,14 @@ public final class EasyVipCommands {
                 continue;
             }
 
-            CompoundTag tag = (CompoundTag) stack.copy().save(player.getServer().registryAccess());
             EasyVipConfig.VipActivationItemDefinition item = new EasyVipConfig.VipActivationItemDefinition();
+            ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+            if (itemId != null) {
+                item.itemId = itemId.toString();
+                item.amount = stack.getCount();
+            }
+
+            CompoundTag tag = (CompoundTag) stack.copy().save(player.getServer().registryAccess());
             item.stackSnbt = NbtUtils.structureToSnbt(tag);
             item.chance = 100.0d;
             items.add(item);

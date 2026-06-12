@@ -187,10 +187,13 @@ O novo VIP herda os defaults de `tiers.toml` e só grava no arquivo o que realme
 
 Remove um tier VIP do jogador.
 
-#### `/easyvip admin savevipactivation <tier>`
+#### `/easyvip savevipactivation <tier>`
 
-Salva o inventário atual do jogador online em `activation_items` do tier informado.
+Salva o inventário atual do jogador online em `config/easyvip/activation_items/<tier>.toml`.
+Sempre que possível, os itens são gravados no formato simples `item` + `amount`.
+Se o item tiver dados complexos demais, o mod ainda faz fallback para `stack_snbt`.
 Cada item é gravado com `chance = 100` por padrão, então você pode ajustar manualmente os itens raros para `50`, `25` etc. sem mexer em mensagens ou comandos.
+Esse comando precisa ser executado por um jogador online, porque ele lê o inventário atual.
 
 #### `/easyvip admin generate vip <tier> <duration> [max_uses] [bound_player]`
 
@@ -324,6 +327,100 @@ Idioma suportado:
 O idioma padrão é `en-us`.
 O broadcast global de item raro usa `vip_lucky_item_broadcast`.
 
+### Layout recomendado
+
+Para deixar a configuração visualmente simples, use esta divisão:
+
+- `tiers.toml` para definir os VIPs
+- `activation_items/<vip>.toml` para definir o kit de ativação de cada VIP
+- `pools.toml` para definir sorteios reutilizáveis
+
+Exemplo enxuto dos 3 arquivos:
+
+`config/easyvip/tiers.toml`
+
+```toml
+[defaults]
+duration = "30d"
+stacking = true
+activation_mode = "extend"
+
+[defaults.messages]
+activated = "&a%player% ativou o VIP %vip_name% por %duration%."
+expired = "&cSeu VIP %vip_name% expirou."
+rare_item_broadcast = "&6%player% ganhou um item lendário ao ativar o VIP %vip_name%!"
+
+[defaults.commands]
+activate = ["broadcast %player% ativou o VIP %vip_name%"]
+expire = []
+
+[vips.pokeball]
+display_name = "Pokeball"
+color = "red"
+priority = 10
+
+[vips.ultraball]
+display_name = "Ultra Ball"
+color = "yellow"
+priority = 20
+
+[vips.masterball]
+display_name = "Master Ball"
+color = "light_purple"
+priority = 30
+```
+
+`config/easyvip/activation_items/masterball.toml`
+
+```toml
+[[items]]
+item = "minecraft:diamond"
+amount = 16
+
+[[items]]
+item = "minecraft:nether_star"
+amount = 1
+
+[[items]]
+item = "minecraft:diamond_pickaxe"
+amount = 1
+enchants = { efficiency = 10, fortune = 5, unbreaking = 10 }
+
+[[items]]
+item = "minecraft:elytra"
+chance = 25
+```
+
+`config/easyvip/pools.toml`
+
+```toml
+[pools.shiny_pokemon]
+values = ["Pikachu", "Bulbasaur", "Charmander", "Squirtle"]
+
+[pools.vip_items]
+values = ["diamond", "emerald", "nether_star"]
+
+[pools.rare_rewards]
+[[pools.rare_rewards.weighted]]
+value = "Lucario"
+weight = 50
+
+[[pools.rare_rewards.weighted]]
+value = "Garchomp"
+weight = 25
+```
+
+Uso simples em comandos:
+
+```toml
+[vips.masterball.commands]
+activate = [
+  "$pokemon = %random(shiny_pokemon)%",
+  "givepokemon %player% $pokemon shiny",
+  "broadcast %player% recebeu um $pokemon shiny!"
+]
+```
+
 ### `tiers.toml`
 
 Define os VIPs em um formato simples e legível.
@@ -348,13 +445,9 @@ expire = []
 [vips.pokeball]
 display_name = "Pokeball"
 color = "red"
-
-[[vips.pokeball.activation_items]]
-stack_snbt = "{id:\"minecraft:diamond\",Count:1b}"
-chance = 50
 ```
 
-Campos mais usados:
+Campos mais usados em `tiers.toml`:
 
 - `defaults.duration`
 - `defaults.stacking`
@@ -367,11 +460,90 @@ Campos mais usados:
 - `vips.<id>.display_name`
 - `vips.<id>.color`
 - `vips.<id>.priority`
-- `vips.<id>.activation_items`
-- `vips.<id>.activation_items.stack_snbt`
-- `vips.<id>.activation_items.chance`
 
-O campo `chance` é opcional e assume `100` por padrão. Os blocos antigos `actions_on_*` continuam sendo lidos por compatibilidade, mas o formato recomendado é o novo.
+Os blocos antigos `actions_on_*` continuam sendo lidos por compatibilidade, mas o formato recomendado é o novo.
+
+### `activation_items/<vip>.toml`
+
+Cada VIP tem o seu próprio arquivo de kit de ativação.
+
+Exemplo:
+
+```toml
+[[items]]
+item = "cobblemon:poke_ball"
+amount = 64
+
+[[items]]
+item = "cobblemon:exp_candy_xl"
+amount = 64
+
+[[items]]
+stack_snbt = "{id:\"minecraft:enchanted_book\",Count:1b,...}"
+
+[[items]]
+item = "minecraft:diamond_pickaxe"
+amount = 1
+
+[items.enchants]
+efficiency = 10
+fortune = 5
+unbreaking = 10
+```
+
+Campos mais usados em `activation_items/<vip>.toml`:
+
+- `items`
+- `items.item`
+- `items.amount`
+- `items.enchants`
+- `items.chance`
+- `items.stack_snbt`
+
+`chance` é opcional e assume `100` por padrão.
+
+### `pools.toml`
+
+Define listas reutilizáveis para sorteios em comandos e mensagens.
+
+Exemplo:
+
+```toml
+[pools.shiny_pokemon]
+values = ["Pikachu", "Bulbasaur", "Charmander", "Squirtle"]
+
+[pools.vip_items]
+values = ["diamond", "emerald", "nether_star"]
+
+[pools.rare_pokemon]
+[[pools.rare_pokemon.weighted]]
+value = "Lucario"
+weight = 50
+
+[[pools.rare_pokemon.weighted]]
+value = "Garchomp"
+weight = 50
+```
+
+Uso em comandos:
+
+```toml
+[vips.vip.commands]
+activate = [
+  "$pokemon = %random(shiny_pokemon)%",
+  "givepokemon %player% $pokemon shiny",
+  "broadcast %player% recebeu um $pokemon shiny!"
+]
+```
+
+Regras:
+
+- `%random(pool_name)%` sorteia um valor da pool
+- `values = [...]` define uma pool simples com chance igual
+- `weighted` define uma pool ponderada
+- `weighted` usa `value` e `weight`
+- variáveis temporárias começam com `$`, por exemplo `$pokemon = ...`
+- uma variável pode ser reutilizada em linhas seguintes do mesmo comando
 
 ### `packages.toml`
 

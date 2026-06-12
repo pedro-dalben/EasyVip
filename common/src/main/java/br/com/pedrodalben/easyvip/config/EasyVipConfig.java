@@ -11,6 +11,7 @@ public final class EasyVipConfig {
 
     public static final CommonConfig common = new CommonConfig();
     public static final MessagesConfig messages = new MessagesConfig();
+    public static final PoolsConfig pools = new PoolsConfig();
     public static final TiersConfig tiers = new TiersConfig();
     public static final PackagesConfig packages = new PackagesConfig();
     public static final RewardKeysConfig rewardKeys = new RewardKeysConfig();
@@ -28,10 +29,102 @@ public final class EasyVipConfig {
 
         loadCommon();
         loadMessages();
+        loadPools();
         loadTiers();
         loadPackages();
         loadRewardKeys();
         loadIntegrations();
+    }
+
+    // ─── Pools Config ───────────────────────────────────────
+    public static class PoolsConfig {
+        public final Map<String, RandomPoolDefinition> list = new LinkedHashMap<>();
+    }
+
+    public static class RandomPoolDefinition {
+        public final List<String> values = new ArrayList<>();
+        public final List<RandomPoolEntry> weighted = new ArrayList<>();
+    }
+
+    public static class RandomPoolEntry {
+        public String value;
+        public double weight = 1.0d;
+    }
+
+    private static Path activationItemsDir() {
+        return configDir.resolve("activation_items");
+    }
+
+    private static Path activationItemsFile(String tierId) {
+        return activationItemsDir().resolve(tierId + ".toml");
+    }
+
+    private static void loadPools() throws IllegalArgumentException, IOException {
+        Path file = configDir.resolve("pools.toml");
+        if (!Files.exists(file)) {
+            TomlWriter.writeFile(file, buildPoolsToml());
+        }
+
+        pools.list.clear();
+
+        Map<String, Object> parsed = TomlParser.parseFile(file);
+        Map<String, Object> poolsData = asMap(parsed.get("pools"));
+        if (poolsData == null) {
+            return;
+        }
+
+        for (Map.Entry<String, Object> entry : poolsData.entrySet()) {
+            Map<String, Object> poolData = asMap(entry.getValue());
+            if (poolData == null) {
+                continue;
+            }
+
+            RandomPoolDefinition def = new RandomPoolDefinition();
+            def.values.addAll(getStringList(poolData, "values", def.values));
+
+            Object weightedData = poolData.get("weighted");
+            if (weightedData instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> weightedList = (List<Object>) weightedData;
+                for (Object item : weightedList) {
+                    Map<String, Object> itemMap = asMap(item);
+                    if (itemMap == null) {
+                        continue;
+                    }
+                    RandomPoolEntry poolEntry = new RandomPoolEntry();
+                    poolEntry.value = getString(itemMap, "value", "");
+                    poolEntry.weight = getDouble(itemMap, "weight", 1.0d);
+                    def.weighted.add(poolEntry);
+                }
+            }
+
+            pools.list.put(entry.getKey(), def);
+        }
+    }
+
+    private static Map<String, Object> buildPoolsToml() {
+        Map<String, Object> map = new LinkedHashMap<>();
+        Map<String, Object> poolsTable = new LinkedHashMap<>();
+        map.put("pools", poolsTable);
+
+        Map<String, Object> shinyPokemon = new LinkedHashMap<>();
+        shinyPokemon.put("values", Arrays.asList(
+                "Pikachu",
+                "Bulbasaur",
+                "Charmander",
+                "Squirtle",
+                "Charizard",
+                "Gengar",
+                "Lucario",
+                "Gardevoir"
+        ));
+        poolsTable.put("shiny_pokemon", shinyPokemon);
+
+        Map<String, Object> vipItems = new LinkedHashMap<>();
+        vipItems.put("values", Arrays.asList("diamond", "emerald", "nether_star", "experience_bottle"));
+        poolsTable.put("vip_items", vipItems);
+
+        return map;
     }
 
     // ─── Common Config ──────────────────────────────────────
@@ -260,6 +353,9 @@ public final class EasyVipConfig {
     }
 
     public static class VipActivationItemDefinition {
+        public String itemId;
+        public int amount = 1;
+        public final Map<String, Integer> enchants = new LinkedHashMap<>();
         public String stackSnbt;
         public double chance = 100.0;
     }
@@ -287,7 +383,8 @@ public final class EasyVipConfig {
     private static void loadTiers() throws IllegalArgumentException, IOException {
         String language = normalizeLanguage(common.language);
         Path file = configDir.resolve("tiers.toml");
-        if (!Files.exists(file)) {
+        boolean created = !Files.exists(file);
+        if (created) {
             TomlWriter.writeFile(file, buildTiersToml(language));
         }
 
@@ -303,6 +400,11 @@ public final class EasyVipConfig {
         } else {
             loadLegacyTiers(parsed);
         }
+
+        if (created) {
+            writeDefaultActivationItemFiles();
+        }
+        loadActivationItemFiles();
     }
 
     private static void resetTierDefaults(String language) {
@@ -443,6 +545,62 @@ public final class EasyVipConfig {
         TomlWriter.writeFile(configDir.resolve("tiers.toml"), buildTiersToml(common.language));
     }
 
+    public static synchronized void saveActivationItems(String tierId) throws IOException {
+        if (tierId == null || tierId.trim().isEmpty()) {
+            return;
+        }
+        VipTierDefinition tier = tiers.list.get(tierId);
+        if (tier == null) {
+            return;
+        }
+        Files.createDirectories(activationItemsDir());
+        TomlWriter.writeFile(activationItemsFile(tierId), buildActivationItemsToml(tier.activationItems));
+    }
+
+    private static void loadActivationItemFiles() throws IOException {
+        Path dir = activationItemsDir();
+        if (!Files.exists(dir)) {
+            return;
+        }
+
+        for (VipTierDefinition tier : tiers.list.values()) {
+            Path file = activationItemsFile(tier.id);
+            if (!Files.exists(file)) {
+                if (tier.activationItems != null && !tier.activationItems.isEmpty()) {
+                    TomlWriter.writeFile(file, buildActivationItemsToml(tier.activationItems));
+                }
+                continue;
+            }
+
+            Map<String, Object> parsed = TomlParser.parseFile(file);
+            List<VipActivationItemDefinition> items = parseActivationItems(parsed.containsKey("items") ? parsed.get("items") : parsed.get("activation_items"));
+            if (!items.isEmpty()) {
+                tier.activationItems.clear();
+                tier.activationItems.addAll(items);
+            } else if (parsed.containsKey("items") || parsed.containsKey("activation_items")) {
+                tier.activationItems.clear();
+            }
+        }
+    }
+
+    private static void writeDefaultActivationItemFiles() throws IOException {
+        Files.createDirectories(activationItemsDir());
+        for (VipTierDefinition sample : buildDefaultVipSamples().values()) {
+            Path file = activationItemsFile(sample.id);
+            if (!Files.exists(file)) {
+                TomlWriter.writeFile(file, buildActivationItemsToml(sample.activationItems));
+            }
+        }
+    }
+
+    private static Map<String, VipTierDefinition> buildDefaultVipSamples() {
+        Map<String, VipTierDefinition> samples = new LinkedHashMap<>();
+        samples.put("pokeball", sampleVip("Pokeball", "red", 10));
+        samples.put("ultraball", sampleVip("Ultra Ball", "yellow", 20));
+        samples.put("masterball", sampleVip("Master Ball", "light_purple", 30));
+        return samples;
+    }
+
     private static Map<String, Object> buildTiersToml(String language) {
         Map<String, Object> map = new LinkedHashMap<>();
 
@@ -474,9 +632,9 @@ public final class EasyVipConfig {
         map.put("vips", vipsMap);
 
         if (tiers.list.isEmpty()) {
-            vipsMap.put("pokeball", buildVipToml(sampleVip("Pokeball", "red", 10)));
-            vipsMap.put("ultraball", buildVipToml(sampleVip("Ultra Ball", "yellow", 20)));
-            vipsMap.put("masterball", buildVipToml(sampleVip("Master Ball", "light_purple", 30)));
+            for (VipTierDefinition sample : buildDefaultVipSamples().values()) {
+                vipsMap.put(sample.id, buildVipToml(sample));
+            }
             return map;
         }
 
@@ -499,6 +657,55 @@ public final class EasyVipConfig {
         def.messages.activated = tiers.defaults.messages.activated;
         def.messages.expired = tiers.defaults.messages.expired;
         def.messages.rareItemBroadcast = tiers.defaults.messages.rareItemBroadcast;
+        if ("pokeball".equals(def.id)) {
+            VipActivationItemDefinition diamonds = new VipActivationItemDefinition();
+            diamonds.itemId = "minecraft:diamond";
+            diamonds.amount = 16;
+            def.activationItems.add(diamonds);
+
+            VipActivationItemDefinition emeralds = new VipActivationItemDefinition();
+            emeralds.itemId = "minecraft:emerald";
+            emeralds.amount = 16;
+            def.activationItems.add(emeralds);
+
+            VipActivationItemDefinition bottles = new VipActivationItemDefinition();
+            bottles.itemId = "minecraft:experience_bottle";
+            bottles.amount = 64;
+            def.activationItems.add(bottles);
+        } else if ("ultraball".equals(def.id)) {
+            VipActivationItemDefinition diamonds = new VipActivationItemDefinition();
+            diamonds.itemId = "minecraft:diamond";
+            diamonds.amount = 32;
+            def.activationItems.add(diamonds);
+
+            VipActivationItemDefinition gold = new VipActivationItemDefinition();
+            gold.itemId = "minecraft:gold_ingot";
+            gold.amount = 32;
+            def.activationItems.add(gold);
+
+            VipActivationItemDefinition pearls = new VipActivationItemDefinition();
+            pearls.itemId = "minecraft:ender_pearl";
+            pearls.amount = 16;
+            def.activationItems.add(pearls);
+        } else if ("masterball".equals(def.id)) {
+            VipActivationItemDefinition diamonds = new VipActivationItemDefinition();
+            diamonds.itemId = "minecraft:diamond";
+            diamonds.amount = 16;
+            def.activationItems.add(diamonds);
+
+            VipActivationItemDefinition star = new VipActivationItemDefinition();
+            star.itemId = "minecraft:nether_star";
+            star.amount = 1;
+            def.activationItems.add(star);
+
+            VipActivationItemDefinition pickaxe = new VipActivationItemDefinition();
+            pickaxe.itemId = "minecraft:diamond_pickaxe";
+            pickaxe.amount = 1;
+            pickaxe.enchants.put("efficiency", 10);
+            pickaxe.enchants.put("fortune", 5);
+            pickaxe.enchants.put("unbreaking", 10);
+            def.activationItems.add(pickaxe);
+        }
         return def;
     }
 
@@ -558,24 +765,6 @@ public final class EasyVipConfig {
             tier.put("commands", commandsMap);
         }
 
-        if (def.activationItems != null && !def.activationItems.isEmpty()) {
-            List<Map<String, Object>> items = new ArrayList<>();
-            for (VipActivationItemDefinition item : def.activationItems) {
-                if (item == null || item.stackSnbt == null || item.stackSnbt.isEmpty()) {
-                    continue;
-                }
-                Map<String, Object> itemMap = new LinkedHashMap<>();
-                itemMap.put("stack_snbt", item.stackSnbt);
-                if (item.chance < 100.0d) {
-                    itemMap.put("chance", item.chance);
-                }
-                items.add(itemMap);
-            }
-            if (!items.isEmpty()) {
-                tier.put("activation_items", items);
-            }
-        }
-
         if (def.actionsOnActivate != null && !def.actionsOnActivate.isEmpty()) {
             tier.put("actions_on_activate", new ArrayList<>(def.actionsOnActivate));
         }
@@ -593,6 +782,42 @@ public final class EasyVipConfig {
         }
 
         return tier;
+    }
+
+    private static Map<String, Object> buildActivationItemsToml(List<VipActivationItemDefinition> activationItems) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        List<Map<String, Object>> items = new ArrayList<>();
+
+        if (activationItems != null) {
+            for (VipActivationItemDefinition item : activationItems) {
+                if (item == null) {
+                    continue;
+                }
+                Map<String, Object> itemMap = new LinkedHashMap<>();
+                if (item.stackSnbt != null && !item.stackSnbt.isEmpty()) {
+                    itemMap.put("stack_snbt", item.stackSnbt);
+                } else {
+                    if (item.itemId != null && !item.itemId.isEmpty()) {
+                        itemMap.put("item", item.itemId);
+                    }
+                    if (item.amount > 1) {
+                        itemMap.put("amount", item.amount);
+                    }
+                    if (item.enchants != null && !item.enchants.isEmpty()) {
+                        itemMap.put("enchants", new LinkedHashMap<>(item.enchants));
+                    }
+                }
+                if (item.chance < 100.0d) {
+                    itemMap.put("chance", item.chance);
+                }
+                if (itemMap.size() > 1 || itemMap.containsKey("stack_snbt")) {
+                    items.add(itemMap);
+                }
+            }
+        }
+
+        map.put("items", items);
+        return map;
     }
 
     // ─── Packages Config ────────────────────────────────────
@@ -830,6 +1055,43 @@ public final class EasyVipConfig {
                     "tiers.toml: defaults.activation_mode inválido: " + tiers.defaults.activationMode
             ));
         }
+        for (Map.Entry<String, RandomPoolDefinition> poolEntry : pools.list.entrySet()) {
+            String poolId = poolEntry.getKey();
+            RandomPoolDefinition pool = poolEntry.getValue();
+            boolean hasValues = pool != null && pool.values != null && !pool.values.isEmpty();
+            boolean hasWeighted = pool != null && pool.weighted != null && !pool.weighted.isEmpty();
+            if (!hasValues && !hasWeighted) {
+                errors.add(localized(
+                        "pools.toml: pool " + poolId + " must define at least one value.",
+                        "pools.toml: o pool " + poolId + " deve definir pelo menos um valor."
+                ));
+            }
+            if (pool != null) {
+                for (String value : pool.values) {
+                    if (value == null || value.trim().isEmpty()) {
+                        errors.add(localized(
+                                "pools.toml: pool " + poolId + " has an empty value entry.",
+                                "pools.toml: o pool " + poolId + " possui uma entrada de valor vazia."
+                        ));
+                    }
+                }
+                for (RandomPoolEntry item : pool.weighted) {
+                    if (item == null || item.value == null || item.value.trim().isEmpty()) {
+                        errors.add(localized(
+                                "pools.toml: pool " + poolId + " has an invalid weighted entry.",
+                                "pools.toml: o pool " + poolId + " possui uma entrada ponderada inválida."
+                        ));
+                        continue;
+                    }
+                    if (item.weight <= 0.0d) {
+                        errors.add(localized(
+                                "pools.toml: pool " + poolId + " has a non-positive weight for value " + item.value + ".",
+                                "pools.toml: o pool " + poolId + " possui peso não positivo para o valor " + item.value + "."
+                        ));
+                    }
+                }
+            }
+        }
         for (VipTierDefinition tier : tiers.list.values()) {
             if (tier.id == null || tier.id.trim().isEmpty()) {
                 errors.add(localized(
@@ -851,12 +1113,38 @@ public final class EasyVipConfig {
                 ));
             }
             for (VipActivationItemDefinition item : tier.activationItems) {
-                if (item == null || item.stackSnbt == null || item.stackSnbt.trim().isEmpty()) {
+                if (item == null) {
                     errors.add(localized(
                             "tiers.toml: tier " + tier.id + " has an invalid activation item entry.",
                             "tiers.toml: o tier " + tier.id + " possui uma entrada de item de ativação inválida."
                     ));
                     continue;
+                }
+                if ((item.itemId == null || item.itemId.trim().isEmpty()) && (item.stackSnbt == null || item.stackSnbt.trim().isEmpty())) {
+                    errors.add(localized(
+                            "tiers.toml: tier " + tier.id + " has an activation item with no item or stack_snbt.",
+                            "tiers.toml: o tier " + tier.id + " possui um item de ativação sem item ou stack_snbt."
+                    ));
+                }
+                if (item.itemId != null && item.itemId.trim().isEmpty()) {
+                    errors.add(localized(
+                            "tiers.toml: tier " + tier.id + " has an empty activation item id.",
+                            "tiers.toml: o tier " + tier.id + " possui um id de item de ativação vazio."
+                    ));
+                }
+                if (item.amount < 1) {
+                    errors.add(localized(
+                            "tiers.toml: tier " + tier.id + " has an activation item amount below 1.",
+                            "tiers.toml: o tier " + tier.id + " possui quantidade de item de ativação abaixo de 1."
+                    ));
+                }
+                for (Map.Entry<String, Integer> enchant : item.enchants.entrySet()) {
+                    if (enchant.getKey() == null || enchant.getKey().trim().isEmpty() || enchant.getValue() == null || enchant.getValue() < 1) {
+                        errors.add(localized(
+                                "tiers.toml: tier " + tier.id + " has an invalid enchant entry.",
+                                "tiers.toml: o tier " + tier.id + " possui uma entrada de encantamento inválida."
+                        ));
+                    }
                 }
                 if (item.chance < 0.0d || item.chance > 100.0d) {
                     errors.add(localized(
@@ -1081,9 +1369,29 @@ public final class EasyVipConfig {
             }
 
             VipActivationItemDefinition item = new VipActivationItemDefinition();
+            item.itemId = getString(itemData, "item", getString(itemData, "item_id", ""));
+            item.amount = Math.max(1, getInt(itemData, "amount", 1));
             item.stackSnbt = getString(itemData, "stack_snbt", getString(itemData, "stack", ""));
             item.chance = getDouble(itemData, "chance", 100.0d);
-            if (item.stackSnbt != null && !item.stackSnbt.isEmpty()) {
+            Map<String, Object> enchantsData = asMap(itemData.get("enchants"));
+            if (enchantsData != null) {
+                for (Map.Entry<String, Object> enchantEntry : enchantsData.entrySet()) {
+                    int level = 0;
+                    Object levelObj = enchantEntry.getValue();
+                    if (levelObj instanceof Number) {
+                        level = ((Number) levelObj).intValue();
+                    } else if (levelObj != null) {
+                        try {
+                            level = Integer.parseInt(levelObj.toString());
+                        } catch (NumberFormatException ignored) {
+                        }
+                    }
+                    if (level > 0) {
+                        item.enchants.put(enchantEntry.getKey(), level);
+                    }
+                }
+            }
+            if ((item.itemId != null && !item.itemId.isEmpty()) || (item.stackSnbt != null && !item.stackSnbt.isEmpty())) {
                 items.add(item);
             }
         }

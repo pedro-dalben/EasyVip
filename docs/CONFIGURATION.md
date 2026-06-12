@@ -2,6 +2,62 @@
 
 ## Implemented
 
+## Recommended layout
+
+Use three separate files to keep the setup easy to read:
+
+- `tiers.toml` for VIP definitions and shared defaults
+- `activation_items/<vip>.toml` for activation kits
+- `pools.toml` for random pools used by commands
+
+Minimal example:
+
+### `tiers.toml`
+
+```toml
+[defaults]
+duration = "30d"
+stacking = true
+activation_mode = "extend"
+
+[defaults.messages]
+activated = "&a%player% ativou o VIP %vip_name% por %duration%."
+expired = "&cSeu VIP %vip_name% expirou."
+rare_item_broadcast = "&6%player% ganhou um item lendário ao ativar o VIP %vip_name%!"
+
+[defaults.commands]
+activate = ["broadcast %player% ativou o VIP %vip_name%"]
+expire = []
+
+[vips.pokeball]
+display_name = "Pokeball"
+color = "red"
+priority = 10
+```
+
+### `activation_items/pokeball.toml`
+
+```toml
+[[items]]
+item = "minecraft:diamond"
+amount = 16
+
+[[items]]
+item = "minecraft:diamond_pickaxe"
+amount = 1
+enchants = { efficiency = 10, fortune = 5, unbreaking = 10 }
+```
+
+### `pools.toml`
+
+```toml
+[pools.shiny_pokemon]
+values = ["Pikachu", "Bulbasaur", "Charmander", "Squirtle"]
+
+[pools.vip_items]
+values = ["diamond", "emerald", "nether_star"]
+```
+
 ### `common.toml`
 
 - `language`
@@ -75,6 +131,16 @@ The FTB Ranks actions are command-template driven and still pass through the com
 
 This message is used when a VIP activation item with chance below `100` is awarded.
 
+### `pools.toml`
+
+- `pools.<id>.values`
+- `pools.<id>.weighted`
+
+`values` defines a simple random pool with equal odds.
+`weighted` defines a weighted pool using `value` and `weight`.
+The placeholder syntax is `%random(pool_name)%`.
+Temporary variables can be assigned inside command lists with `$name = ...` and reused later in the same list.
+
 ### `tiers.toml`
 
 The simplified VIP schema uses:
@@ -82,8 +148,21 @@ The simplified VIP schema uses:
 - `[defaults]` for shared duration, stacking and activation mode
 - `[defaults.messages]` for the activated, expired and rare-item broadcast texts
 - `[defaults.commands]` for shared activate/expire command lists
+- `commands.activate` and `commands.expire` can use `%random(pool)%` and temporary variables like `$pokemon = ...`
 - `[vips.<id>]` for the per-VIP display name and color
-- `[[vips.<id>.activation_items]]` for activation kit items and their `chance`
+- `vips.<id>.priority`
+
+### `activation_items/<vip>.toml`
+
+Each VIP has its own activation kit file.
+
+The file uses `[[items]]` entries with:
+
+- `item`
+- `amount`
+- `enchants`
+- `chance`
+- `stack_snbt` for legacy or complex cases
 
 `chance` is optional and defaults to `100`.
 The legacy `actions_on_*` sections are still parsed for compatibility, but the simplified schema above is the recommended format.

@@ -34,7 +34,7 @@
 - `/easyvip createvip <id> <display_name> [color]`
 - `/easyvip admin addvip <player> <tier> <duration>`
 - `/easyvip admin removevip <player> <tier>`
-- `/easyvip admin savevipactivation <tier>`
+- `/easyvip savevipactivation <tier>`
 - `/easyvip admin generate vip <tier> <duration> [max_uses] [bound_player]`
 - `/easyvip admin generate reward <reward_key_id> [max_uses] [bound_player]`
 - `/easyvip admin givepackage <player> <package_id>`
@@ -50,4 +50,4 @@
 ## Notes
 
 - `/easyvip createvip` cria um VIP novo sem alterar os tiers já existentes.
-- `/easyvip admin savevipactivation` grava o inventário atual em `activation_items`; a chance padrão é `100`, então você pode editar só os itens raros depois.
+- `/easyvip savevipactivation` grava o inventário atual em `config/easyvip/activation_items/<tier>.toml`; quando possível, ele usa `item` + `amount`, e a chance padrão é `100`, então você pode editar só os itens raros depois.

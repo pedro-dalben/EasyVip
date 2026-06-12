@@ -6,8 +6,11 @@ import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.*;
 import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
 import br.com.pedrodalben.easyvip.util.DurationParser;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtUtils;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -18,8 +21,12 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class VipService {
+
+    private static final Pattern SCRIPT_VARIABLE_ASSIGNMENT = Pattern.compile("^\\$([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.+)$");
 
     private VipService() {
     }
@@ -213,7 +220,7 @@ public final class VipService {
                 : EasyVipConfig.messages.vipLuckyItemBroadcast;
 
         for (EasyVipConfig.VipActivationItemDefinition itemDef : tierDef.activationItems) {
-            if (itemDef == null || itemDef.stackSnbt == null || itemDef.stackSnbt.isBlank()) {
+            if (itemDef == null) {
                 continue;
             }
 
@@ -223,7 +230,7 @@ public final class VipService {
                 continue;
             }
 
-            ItemStack stack = parseActivationItemStack(server, itemDef.stackSnbt);
+            ItemStack stack = buildActivationItemStack(server, itemDef);
             if (stack.isEmpty()) {
                 continue;
             }
@@ -263,25 +270,80 @@ public final class VipService {
         }
     }
 
+    private static ItemStack buildActivationItemStack(MinecraftServer server, EasyVipConfig.VipActivationItemDefinition itemDef) {
+        if (server == null || itemDef == null) {
+            return ItemStack.EMPTY;
+        }
+
+        if (itemDef.stackSnbt != null && !itemDef.stackSnbt.isBlank()) {
+            return parseActivationItemStack(server, itemDef.stackSnbt);
+        }
+
+        if (itemDef.itemId == null || itemDef.itemId.isBlank()) {
+            return ItemStack.EMPTY;
+        }
+
+        ResourceLocation itemId = normalizeResourceLocation(itemDef.itemId);
+        if (itemId == null) {
+            return ItemStack.EMPTY;
+        }
+
+        var item = BuiltInRegistries.ITEM.get(itemId);
+        if (item == null) {
+            return ItemStack.EMPTY;
+        }
+
+        ItemStack stack = new ItemStack(item, Math.max(1, itemDef.amount));
+        var enchantmentRegistry = server.registryAccess().registryOrThrow(Registries.ENCHANTMENT);
+        for (Map.Entry<String, Integer> enchant : itemDef.enchants.entrySet()) {
+            if (enchant.getKey() == null || enchant.getKey().isBlank() || enchant.getValue() == null || enchant.getValue() < 1) {
+                continue;
+            }
+            ResourceLocation enchantId = normalizeResourceLocation(enchant.getKey());
+            if (enchantId == null) {
+                continue;
+            }
+            enchantmentRegistry.getHolder(enchantId).ifPresent(holder -> stack.enchant(holder, enchant.getValue()));
+        }
+        return stack;
+    }
+
+    private static ResourceLocation normalizeResourceLocation(String id) {
+        if (id == null || id.isBlank()) {
+            return null;
+        }
+        String normalized = id.trim();
+        if (!normalized.contains(":")) {
+            normalized = "minecraft:" + normalized;
+        }
+        return ResourceLocation.tryParse(normalized);
+    }
+
     private static void executeServerCommandList(MinecraftServer server, UUID uuid, ServerPlayer player, String playerName,
                                                  List<String> commands, Map<String, String> ctx, String source) {
         if (server == null || commands == null || commands.isEmpty()) {
             return;
         }
 
-        List<Map<String, Object>> actions = new ArrayList<>();
+        Map<String, String> scriptContext = new HashMap<>(ctx);
         for (String command : commands) {
             if (command == null || command.trim().isEmpty()) {
                 continue;
             }
+            String trimmed = command.trim();
+            Matcher matcher = SCRIPT_VARIABLE_ASSIGNMENT.matcher(trimmed);
+            if (matcher.matches()) {
+                String variableName = matcher.group(1);
+                String valueExpression = matcher.group(2);
+                String value = ActionExecutor.resolvePlaceholders(valueExpression, scriptContext);
+                scriptContext.put("var." + variableName, value);
+                continue;
+            }
+
             Map<String, Object> action = new LinkedHashMap<>();
             action.put("type", "run_server_command");
-            action.put("command", command);
-            actions.add(action);
-        }
-
-        if (!actions.isEmpty()) {
-            executeTierActions(server, uuid, playerName, player, actions, ctx, source);
+            action.put("command", ActionExecutor.resolvePlaceholders(command, scriptContext));
+            executeTierActions(server, uuid, playerName, player, List.of(action), scriptContext, source);
         }
     }
 
