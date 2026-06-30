@@ -82,4 +82,11 @@ public final class PermissionBridge {
             LuckPermsWrapper.setGroup(player, group, value);
         }
     }
+
+    public static boolean createGroup(String groupName) {
+        if (luckPermsPresent && EasyVipConfig.integrations.luckpermsEnabled) {
+            return LuckPermsWrapper.createGroup(groupName);
+        }
+        return false;
+    }
 }

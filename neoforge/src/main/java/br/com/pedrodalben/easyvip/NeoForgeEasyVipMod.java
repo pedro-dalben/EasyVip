@@ -9,6 +9,7 @@ import br.com.pedrodalben.easyvip.service.ExpirationService;
 import br.com.pedrodalben.easyvip.service.KeyService;
 import br.com.pedrodalben.easyvip.service.PackageService;
 import br.com.pedrodalben.easyvip.service.VipService;
+import br.com.pedrodalben.easyvip.webstore.WebStoreSyncService;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -54,6 +55,7 @@ public final class NeoForgeEasyVipMod {
             EasyVipConfig.initialize(configDir);
             EasyVipConfig.loadAll();
             PersistenceManager.initialize(configDir);
+            WebStoreSyncService.init(configDir);
             ExpirationService.start(server);
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize EasyVip configuration", e);
@@ -72,6 +74,14 @@ public final class NeoForgeEasyVipMod {
             PackageService.cleanupExpiredPendingVariants(player.getUUID());
             PackageService.notifyPendingVariantsOnLogin(player);
             VipService.handlePlayerJoin(player);
+
+            if (EasyVipConfig.webstore.syncOnLogin || EasyVipConfig.webstore.syncOnJoin) {
+                WebStoreSyncService.syncPlayer(
+                        player.getUUID(),
+                        player.getGameProfile().getName(),
+                        player.getIpAddress()
+                );
+            }
         }
     }
 

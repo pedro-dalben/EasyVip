@@ -2,6 +2,7 @@ package br.com.pedrodalben.easyvip.platform;
 
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.model.group.Group;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.Node;
 import net.luckperms.api.node.types.PermissionNode;
@@ -59,6 +60,23 @@ public final class LuckPermsWrapper {
             }
         } catch (Throwable t) {
             // Safe fallback
+        }
+    }
+
+    public static boolean createGroup(String groupName) {
+        try {
+            LuckPerms api = LuckPermsProvider.get();
+            var groupManager = api.getGroupManager();
+
+            if (groupManager.loadGroup(groupName).get().isPresent()) {
+                return true;
+            }
+
+            Group group = groupManager.createAndLoadGroup(groupName).get();
+            groupManager.saveGroup(group).get();
+            return true;
+        } catch (Throwable t) {
+            return false;
         }
     }
 }

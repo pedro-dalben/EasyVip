@@ -6,6 +6,7 @@ import br.com.pedrodalben.easyvip.model.*;
 import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
 import br.com.pedrodalben.easyvip.platform.PermissionBridge;
 import br.com.pedrodalben.easyvip.service.*;
+import br.com.pedrodalben.easyvip.webstore.WebStoreSyncService;
 import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -266,6 +267,11 @@ public final class EasyVipCommands {
 
         root.then(config);
 
+        // /link - gera desafio para vincular conta web
+        dispatcher.register(Commands.literal("link")
+                .requires(src -> hasPermission(src, "easyvip.use"))
+                .executes(EasyVipCommands::executeLink));
+
         dispatcher.register(root);
     }
 
@@ -355,6 +361,10 @@ public final class EasyVipCommands {
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.reloadError, context)
             ));
             return 0;
+        }
+
+        if (PermissionBridge.isLuckPermsPresent() && EasyVipConfig.integrations.luckpermsEnabled) {
+            PermissionBridge.createGroup(id);
         }
 
         Map<String, String> context = new HashMap<>();
@@ -1132,5 +1142,47 @@ public final class EasyVipCommands {
             }
             return 0;
         }
+    }
+
+    private static int executeLink(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        if (!(src.getEntity() instanceof net.minecraft.server.level.ServerPlayer player)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.playerOnly));
+            return 0;
+        }
+
+        if (!WebStoreSyncService.isEnabled()) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized(
+                    "Web store integration is not configured. Contact an administrator.",
+                    "A integração com a loja web não está configurada. Contate um administrador."
+            )));
+            return 0;
+        }
+
+        String code = generateLinkCode();
+        String codeDigest = WebStoreSyncService.sha256(code);
+
+        WebStoreSyncService.registerChallenge(player.getUUID(), code);
+
+        player.sendSystemMessage(Component.literal("§7[§eEasyVip§7] §e" + EasyVipConfig.localized(
+                "Link your account on the web store using this code:",
+                "Vincule sua conta na loja web usando este código:"
+        )));
+        player.sendSystemMessage(Component.literal("§6§l" + code));
+        player.sendSystemMessage(Component.literal("§7" + EasyVipConfig.localized(
+                "The code expires in 5 minutes.",
+                "O código expira em 5 minutos."
+        )));
+        return 1;
+    }
+
+    private static String generateLinkCode() {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        StringBuilder sb = new StringBuilder(8);
+        java.util.Random random = new java.util.Random();
+        for (int i = 0; i < 8; i++) {
+            sb.append(chars.charAt(random.nextInt(chars.length())));
+        }
+        return sb.toString();
     }
 }

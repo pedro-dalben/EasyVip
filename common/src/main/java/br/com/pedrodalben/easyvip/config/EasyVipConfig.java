@@ -1,5 +1,6 @@
 package br.com.pedrodalben.easyvip.config;
 
+import br.com.pedrodalben.easyvip.webstore.WebStoreConfig;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +17,7 @@ public final class EasyVipConfig {
     public static final PackagesConfig packages = new PackagesConfig();
     public static final RewardKeysConfig rewardKeys = new RewardKeysConfig();
     public static final IntegrationsConfig integrations = new IntegrationsConfig();
+    public static final WebStoreConfig webstore = new WebStoreConfig();
 
     private EasyVipConfig() {
     }
@@ -34,6 +36,7 @@ public final class EasyVipConfig {
         loadPackages();
         loadRewardKeys();
         loadIntegrations();
+        loadWebStore();
     }
 
     // ─── Pools Config ───────────────────────────────────────
@@ -1025,6 +1028,34 @@ public final class EasyVipConfig {
         integrations.sqlUrl = getString(data, "sql_url", integrations.sqlUrl);
         integrations.sqlUsername = getString(data, "sql_username", "");
         integrations.sqlPassword = getString(data, "sql_password", "");
+    }
+
+    private static void loadWebStore() throws IllegalArgumentException, IOException {
+        Path file = configDir.resolve("webstore.toml");
+        if (!Files.exists(file)) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("enabled", webstore.enabled);
+            map.put("api_url", webstore.apiUrl);
+            map.put("api_token", webstore.apiToken);
+            map.put("sync_on_register", webstore.syncOnRegister);
+            map.put("sync_on_login", webstore.syncOnLogin);
+            map.put("sync_on_join", webstore.syncOnJoin);
+            map.put("sync_on_nick_change", webstore.syncOnNickChange);
+            map.put("retry_max_attempts", webstore.retryMaxAttempts);
+            map.put("retry_delay_seconds", webstore.retryDelaySeconds);
+            TomlWriter.writeFile(file, map);
+        }
+
+        Map<String, Object> data = TomlParser.parseFile(file);
+        webstore.enabled = getBoolean(data, "enabled", false);
+        webstore.apiUrl = getString(data, "api_url", "http://localhost:3000").replaceAll("/+$", "");
+        webstore.apiToken = getString(data, "api_token", "");
+        webstore.syncOnRegister = getBoolean(data, "sync_on_register", true);
+        webstore.syncOnLogin = getBoolean(data, "sync_on_login", true);
+        webstore.syncOnJoin = getBoolean(data, "sync_on_join", true);
+        webstore.syncOnNickChange = getBoolean(data, "sync_on_nick_change", true);
+        webstore.retryMaxAttempts = getInt(data, "retry_max_attempts", 3);
+        webstore.retryDelaySeconds = getInt(data, "retry_delay_seconds", 5);
     }
 
     public static List<String> validate() {
