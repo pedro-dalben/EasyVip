@@ -1,5 +1,6 @@
 package br.com.pedrodalben.easyvip.persistence;
 
+import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.*;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -26,6 +27,7 @@ public final class PersistenceManager {
 
     private static final ReentrantReadWriteLock LOCK = new ReentrantReadWriteLock();
     private static Path dataDir;
+    private static boolean sqlMode = false;
 
     // Cache
     private static final Map<UUID, PlayerVipRegistry> vips = new HashMap<>();
@@ -39,6 +41,18 @@ public final class PersistenceManager {
 
     public static void initialize(Path dir) {
         dataDir = dir.resolve("data");
+
+        if (EasyVipConfig.integrations.sqlEnabled) {
+            sqlMode = true;
+            SqlDatabaseManager.initialize(
+                EasyVipConfig.integrations.sqlUrl,
+                EasyVipConfig.integrations.sqlUsername,
+                EasyVipConfig.integrations.sqlPassword
+            );
+            System.out.println("[EasyVip] SQL persistence enabled: " + EasyVipConfig.integrations.sqlUrl);
+            return;
+        }
+
         try {
             Files.createDirectories(dataDir);
         } catch (IOException e) {
@@ -48,6 +62,10 @@ public final class PersistenceManager {
     }
 
     public static void shutdown() {
+        if (sqlMode) {
+            SqlDatabaseManager.shutdown();
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             saveVipsSync();
@@ -293,6 +311,9 @@ public final class PersistenceManager {
 
     // ─── API Getters & Setters ──────────────────────────────
     public static PlayerVipRegistry getPlayerVips(UUID uuid) {
+        if (sqlMode) {
+            return SqlDatabaseManager.getPlayerVips(uuid);
+        }
         LOCK.readLock().lock();
         try {
             return vips.get(uuid);
@@ -302,6 +323,9 @@ public final class PersistenceManager {
     }
 
     public static Map<UUID, PlayerVipRegistry> getAllPlayerVips() {
+        if (sqlMode) {
+            return SqlDatabaseManager.getAllPlayerVips();
+        }
         LOCK.readLock().lock();
         try {
             Map<UUID, PlayerVipRegistry> snapshot = new HashMap<>();
@@ -315,6 +339,10 @@ public final class PersistenceManager {
     }
 
     public static void updatePlayerVips(UUID uuid, PlayerVipRegistry registry) {
+        if (sqlMode) {
+            SqlDatabaseManager.updatePlayerVips(uuid, registry);
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             vips.put(uuid, registry);
@@ -325,6 +353,9 @@ public final class PersistenceManager {
     }
 
     public static KeyRecord getKey(String code) {
+        if (sqlMode) {
+            return SqlDatabaseManager.getKey(code);
+        }
         LOCK.readLock().lock();
         try {
             return keys.get(code);
@@ -334,6 +365,10 @@ public final class PersistenceManager {
     }
 
     public static void putKey(KeyRecord keyRecord) {
+        if (sqlMode) {
+            SqlDatabaseManager.putKey(keyRecord);
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             keys.put(keyRecord.getCode(), keyRecord);
@@ -344,6 +379,10 @@ public final class PersistenceManager {
     }
 
     public static void removeKey(String code) {
+        if (sqlMode) {
+            SqlDatabaseManager.removeKey(code);
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             keys.remove(code);
@@ -354,6 +393,9 @@ public final class PersistenceManager {
     }
 
     public static List<KeyRecord> getAllKeys() {
+        if (sqlMode) {
+            return SqlDatabaseManager.getAllKeys();
+        }
         LOCK.readLock().lock();
         try {
             return new ArrayList<>(keys.values());
@@ -363,6 +405,9 @@ public final class PersistenceManager {
     }
 
     public static List<PendingVariantSelection> getPendingVariants(UUID uuid) {
+        if (sqlMode) {
+            return SqlDatabaseManager.getPendingVariants(uuid);
+        }
         LOCK.readLock().lock();
         try {
             List<PendingVariantSelection> list = pendingVariants.get(uuid);
@@ -373,6 +418,9 @@ public final class PersistenceManager {
     }
 
     public static Map<UUID, List<PendingVariantSelection>> getAllPendingVariants() {
+        if (sqlMode) {
+            return SqlDatabaseManager.getAllPendingVariants();
+        }
         LOCK.readLock().lock();
         try {
             Map<UUID, List<PendingVariantSelection>> snapshot = new HashMap<>();
@@ -386,6 +434,10 @@ public final class PersistenceManager {
     }
 
     public static void addPendingVariant(UUID uuid, PendingVariantSelection selection) {
+        if (sqlMode) {
+            SqlDatabaseManager.addPendingVariant(uuid, selection);
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             List<PendingVariantSelection> list = pendingVariants.computeIfAbsent(uuid, k -> new ArrayList<>());
@@ -397,6 +449,10 @@ public final class PersistenceManager {
     }
 
     public static void removePendingVariant(UUID uuid, String packageId) {
+        if (sqlMode) {
+            SqlDatabaseManager.removePendingVariant(uuid, packageId);
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             List<PendingVariantSelection> list = pendingVariants.get(uuid);
@@ -413,6 +469,9 @@ public final class PersistenceManager {
     }
 
     public static Map<String, Long> getPackageUsage(UUID uuid) {
+        if (sqlMode) {
+            return SqlDatabaseManager.getPackageUsage(uuid);
+        }
         LOCK.readLock().lock();
         try {
             Map<String, Long> usage = packageUsage.get(uuid);
@@ -423,6 +482,10 @@ public final class PersistenceManager {
     }
 
     public static void updatePackageUsage(UUID uuid, Map<String, Long> usage) {
+        if (sqlMode) {
+            SqlDatabaseManager.updatePackageUsage(uuid, usage);
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             packageUsage.put(uuid, new HashMap<>(usage));
@@ -433,6 +496,9 @@ public final class PersistenceManager {
     }
 
     public static Map<UUID, Map<String, Long>> getAllPackageUsage() {
+        if (sqlMode) {
+            return SqlDatabaseManager.getAllPackageUsage();
+        }
         LOCK.readLock().lock();
         try {
             Map<UUID, Map<String, Long>> snapshot = new HashMap<>();
@@ -446,6 +512,10 @@ public final class PersistenceManager {
     }
 
     public static void log(String operator, String action, String details) {
+        if (sqlMode) {
+            SqlDatabaseManager.log(new AuditLogRecord(operator, action, details));
+            return;
+        }
         LOCK.writeLock().lock();
         try {
             auditLogs.add(new AuditLogRecord(operator, action, details));
@@ -456,6 +526,9 @@ public final class PersistenceManager {
     }
 
     public static List<AuditLogRecord> getAuditLogs() {
+        if (sqlMode) {
+            return SqlDatabaseManager.getAuditLogs();
+        }
         LOCK.readLock().lock();
         try {
             return new ArrayList<>(auditLogs);

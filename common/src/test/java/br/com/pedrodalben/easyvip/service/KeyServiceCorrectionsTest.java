@@ -199,6 +199,37 @@ class KeyServiceCorrectionsTest {
     }
 
     @Test
+    void customKeyValidConsumesKey() {
+        UUID uuid = UUID.randomUUID();
+        KeyRecord record = new KeyRecord();
+        record.setCode("EVIP-CUSTOM1");
+        record.setType("custom");
+        record.setActions(List.of(Map.of(
+                "type", "send_message",
+                "message", "hello custom"
+        )));
+        record.setMaxUses(1);
+        PersistenceManager.putKey(record);
+
+        assertEquals(KeyService.RedeemResult.SUCCESS, KeyService.redeemRewardKeyForTest(record, uuid, "Pedro", "minecraft:overworld", true, actions -> true));
+        assertEquals(1, PersistenceManager.getKey(record.getCode()).getUsedCount());
+    }
+
+    @Test
+    void customKeyEmptyActionsDoesNotConsume() {
+        UUID uuid = UUID.randomUUID();
+        KeyRecord record = new KeyRecord();
+        record.setCode("EVIP-CUSTOM2");
+        record.setType("custom");
+        record.setActions(new ArrayList<>());
+        record.setMaxUses(1);
+        PersistenceManager.putKey(record);
+
+        assertEquals(KeyService.RedeemResult.ERROR, KeyService.redeemRewardKeyForTest(record, uuid, "Pedro", "minecraft:overworld", true, actions -> true));
+        assertEquals(0, PersistenceManager.getKey(record.getCode()).getUsedCount());
+    }
+
+    @Test
     void physicalItemValidationRequiresMarker() {
         assertTrue(KeyService.isPhysicalKeyPayloadValid("minecraft:tripwire_hook", "minecraft:tripwire_hook", true, true));
         assertFalse(KeyService.isPhysicalKeyPayloadValid("minecraft:tripwire_hook", "minecraft:tripwire_hook", false, true));

@@ -108,6 +108,23 @@ public final class KeyService {
         return record;
     }
 
+    public static KeyRecord generateCustomKey(List<Map<String, Object>> actions, int maxUses, UUID boundPlayer, long expiryTime) {
+        KeyRecord record = new KeyRecord();
+        record.setCode(generateRandomCode());
+        record.setType("custom");
+        record.setMaxUses(maxUses);
+        record.setBoundPlayerUuid(boundPlayer);
+        record.setCreatedTime(System.currentTimeMillis());
+        record.setExpiryTime(expiryTime);
+        if (actions != null) {
+            record.setActions(actions);
+        }
+
+        PersistenceManager.putKey(record);
+        PersistenceManager.log("System", "generate_custom_key", "Generated Custom key " + record.getCode() + " with " + (actions != null ? actions.size() : 0) + " actions");
+        return record;
+    }
+
     public static RedeemResult redeemKey(ServerPlayer player, String rawCode, boolean bypassConfirm) {
         return redeemKey(player, rawCode, bypassConfirm, CommandThrottleType.USE, true);
     }
@@ -242,6 +259,39 @@ public final class KeyService {
                         ), ctx)
                 ));
                 PersistenceManager.log(playerName, "redeem_key_failed", "Reward actions failed for " + code);
+                return RedeemResult.ERROR;
+            }
+            success = true;
+        } else if (record.getType().equalsIgnoreCase("custom")) {
+            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
+                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
+                if (!isDimensionAllowed(player.level().dimension().location().toString(), EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                    PersistenceManager.log(playerName, "redeem_key_failed", "Dimension blocked for " + code);
+                    return RedeemResult.ERROR;
+                }
+            }
+
+            List<Map<String, Object>> actions = record.getActions();
+            if (actions == null || actions.isEmpty()) {
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "&cCustom actions not found or invalid. The key was not consumed.",
+                                "&cAções customizadas não encontradas ou inválidas. A chave não foi consumida."
+                        ), ctx)
+                ));
+                PersistenceManager.log(playerName, "redeem_key_failed", "Custom actions missing for " + code);
+                return RedeemResult.ERROR;
+            }
+
+            boolean actionsOk = ActionExecutor.execute(player, actions, ctx);
+            if (!actionsOk) {
+                player.sendSystemMessage(Component.literal(
+                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
+                                "&cError executing custom actions. The key was not consumed.",
+                                "&cErro ao executar ações customizadas. A chave não foi consumida."
+                        ), ctx)
+                ));
+                PersistenceManager.log(playerName, "redeem_key_failed", "Custom actions failed for " + code);
                 return RedeemResult.ERROR;
             }
             success = true;
@@ -416,43 +466,71 @@ public final class KeyService {
             }
         }
 
-        EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
-        if (rkDef == null) {
-            return RedeemResult.ERROR;
-        }
-
-        if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
-                || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
-            if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+        List<Map<String, Object>> actions = record.getActions();
+        if ("reward".equalsIgnoreCase(record.getType())) {
+            EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
+            if (rkDef == null) {
                 return RedeemResult.ERROR;
             }
-        }
-        if (!rkDef.allowedDimensions.isEmpty() && !isDimensionAllowed(dimensionId, rkDef.allowedDimensions, Collections.emptyList())) {
-            return RedeemResult.ERROR;
-        }
 
-        List<Map<String, Object>> actions = record.getActions();
-        if (actions == null || actions.isEmpty()) {
-            actions = rkDef.actions;
-        }
-        if (actions == null || actions.isEmpty()) {
-            return RedeemResult.ERROR;
-        }
+            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
+                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
+                if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                    return RedeemResult.ERROR;
+                }
+            }
+            if (!rkDef.allowedDimensions.isEmpty() && !isDimensionAllowed(dimensionId, rkDef.allowedDimensions, Collections.emptyList())) {
+                return RedeemResult.ERROR;
+            }
 
-        if (actionRunner == null || !Boolean.TRUE.equals(actionRunner.apply(actions))) {
-            return RedeemResult.ERROR;
-        }
+            if (actions == null || actions.isEmpty()) {
+                actions = rkDef.actions;
+            }
+            if (actions == null || actions.isEmpty()) {
+                return RedeemResult.ERROR;
+            }
 
-        if (rkDef.consumeOnUse) {
+            if (actionRunner == null || !Boolean.TRUE.equals(actionRunner.apply(actions))) {
+                return RedeemResult.ERROR;
+            }
+
+            if (rkDef.consumeOnUse) {
+                record.setUsedCount(record.getUsedCount() + 1);
+                record.getUsedBy().add(uuid);
+            }
+            record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
+            PersistenceManager.putKey(record);
+            if (applyCooldown) {
+                markCooldown(uuid, CommandThrottleType.USE);
+            }
+            return RedeemResult.SUCCESS;
+        } else if ("custom".equalsIgnoreCase(record.getType())) {
+            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
+                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
+                if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                    return RedeemResult.ERROR;
+                }
+            }
+
+            if (actions == null || actions.isEmpty()) {
+                return RedeemResult.ERROR;
+            }
+
+            if (actionRunner == null || !Boolean.TRUE.equals(actionRunner.apply(actions))) {
+                return RedeemResult.ERROR;
+            }
+
             record.setUsedCount(record.getUsedCount() + 1);
             record.getUsedBy().add(uuid);
+            record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
+            PersistenceManager.putKey(record);
+            if (applyCooldown) {
+                markCooldown(uuid, CommandThrottleType.USE);
+            }
+            return RedeemResult.SUCCESS;
         }
-        record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
-        PersistenceManager.putKey(record);
-        if (applyCooldown) {
-            markCooldown(uuid, CommandThrottleType.USE);
-        }
-        return RedeemResult.SUCCESS;
+
+        return RedeemResult.ERROR;
     }
 
     static boolean isPhysicalKeyPayloadValid(String configuredItemId, String actualItemId, boolean markerPresent, boolean hasKeyValue) {

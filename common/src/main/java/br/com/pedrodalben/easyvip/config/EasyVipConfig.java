@@ -995,7 +995,7 @@ public final class EasyVipConfig {
         public String ftbRanksRemoveCommand = "ftbranks remove {player} {rank}";
         public String ftbRanksSetCommand = "ftbranks set {player} {rank}";
         public boolean sqlEnabled = false;
-        public String sqlUrl = "jdbc:sqlite:config/easyvip/data/database.db";
+        public String sqlUrl = "jdbc:mysql://localhost:3306/easyvip";
         public String sqlUsername = "";
         public String sqlPassword = "";
     }

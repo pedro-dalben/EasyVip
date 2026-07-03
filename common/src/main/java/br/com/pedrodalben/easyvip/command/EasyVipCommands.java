@@ -185,6 +185,56 @@ public final class EasyVipCommands {
                                         .then(Commands.argument("bound_player", GameProfileArgument.gameProfile())
                                                 .executes(ctx -> executeGenerateKey(ctx, "reward", resolveGameProfiles(ctx, "bound_player"))))))));
 
+        // /easyvip admin generate command <command>
+        // /easyvip admin generate command <max_uses> <bound_player_name> <command>
+        admin.then(Commands.literal("generate")
+                .then(Commands.literal("command")
+                        .then(Commands.argument("command", StringArgumentType.greedyString())
+                                .executes(ctx -> executeGenerateCommandKey(ctx, 1, "none")))
+                        .then(Commands.argument("max_uses", IntegerArgumentType.integer(1))
+                                .then(Commands.argument("bound_player_name", StringArgumentType.word())
+                                        .then(Commands.argument("command", StringArgumentType.greedyString())
+                                                .executes(ctx -> executeGenerateCommandKey(ctx,
+                                                        IntegerArgumentType.getInteger(ctx, "max_uses"),
+                                                        StringArgumentType.getString(ctx, "bound_player_name"))))))));
+
+        // /easyvip admin generate item <item_id> <amount> [max_uses] [bound_player]
+        admin.then(Commands.literal("generate")
+                .then(Commands.literal("item")
+                        .then(Commands.argument("item_id", StringArgumentType.word())
+                                .then(Commands.argument("amount", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> executeGenerateItemKey(ctx, 1, null))
+                                        .then(Commands.argument("max_uses", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> executeGenerateItemKey(ctx, IntegerArgumentType.getInteger(ctx, "max_uses"), null))
+                                                .then(Commands.argument("bound_player", GameProfileArgument.gameProfile())
+                                                        .executes(ctx -> executeGenerateItemKey(ctx,
+                                                                IntegerArgumentType.getInteger(ctx, "max_uses"),
+                                                                resolveGameProfiles(ctx, "bound_player")))))))));
+
+        // /easyvip admin generate itemstack [max_uses] [bound_player]
+        admin.then(Commands.literal("generate")
+                .then(Commands.literal("itemstack")
+                        .executes(ctx -> executeGenerateItemStackKey(ctx, 1, null))
+                        .then(Commands.argument("max_uses", IntegerArgumentType.integer(1))
+                                .executes(ctx -> executeGenerateItemStackKey(ctx, IntegerArgumentType.getInteger(ctx, "max_uses"), null))
+                                .then(Commands.argument("bound_player", GameProfileArgument.gameProfile())
+                                        .executes(ctx -> executeGenerateItemStackKey(ctx,
+                                                IntegerArgumentType.getInteger(ctx, "max_uses"),
+                                                resolveGameProfiles(ctx, "bound_player")))))));
+
+        // /easyvip admin generate custom <actions_json>
+        // /easyvip admin generate custom <max_uses> <bound_player_name> <actions_json>
+        admin.then(Commands.literal("generate")
+                .then(Commands.literal("custom")
+                        .then(Commands.argument("actions_json", StringArgumentType.greedyString())
+                                .executes(ctx -> executeGenerateCustomKey(ctx, 1, "none")))
+                        .then(Commands.argument("max_uses", IntegerArgumentType.integer(1))
+                                .then(Commands.argument("bound_player_name", StringArgumentType.word())
+                                        .then(Commands.argument("actions_json", StringArgumentType.greedyString())
+                                                .executes(ctx -> executeGenerateCustomKey(ctx,
+                                                        IntegerArgumentType.getInteger(ctx, "max_uses"),
+                                                        StringArgumentType.getString(ctx, "bound_player_name"))))))));
+
         // /easyvip admin givepackage <player> <package_id>
         admin.then(Commands.literal("givepackage")
                 .then(Commands.argument("player", GameProfileArgument.gameProfile())
@@ -454,10 +504,13 @@ public final class EasyVipCommands {
                         var tierDef = EasyVipConfig.tiers.list.get(rec.getTierId());
                         tierDisplay = (tierDef != null) ? tierDef.displayName : rec.getTierId();
                         duration = rec.getDuration();
+                    } else if (rec.getType().equalsIgnoreCase("custom")) {
+                        tierDisplay = EasyVipConfig.localized("Custom Reward", "Recompensa Personalizada");
+                        duration = EasyVipConfig.localized("one-time use", "uso único");
                     } else {
                         var rkDef = EasyVipConfig.rewardKeys.list.get(rec.getRewardKeyId());
-                        tierDisplay = (rkDef != null) ? rkDef.displayName : rec.getRewardKeyId();
-                        duration = "recompensa";
+                        tierDisplay = (rkDef != null) ? rkDef.displayName : (rec.getRewardKeyId() != null ? rec.getRewardKeyId() : EasyVipConfig.localized("Reward", "Recompensa"));
+                        duration = EasyVipConfig.localized("reward", "recompensa");
                     }
                 }
                 Map<String, String> context = new HashMap<>();
@@ -870,6 +923,170 @@ public final class EasyVipCommands {
         src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Key generated successfully: ", "Chave gerada com sucesso: ")
                 + "§e" + keyRec.getCode()
                 + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + finalMaxUses
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+        return 1;
+    }
+
+    private static int executeGenerateCommandKey(CommandContext<CommandSourceStack> ctx, int maxUses, String boundPlayerName) {
+        CommandSourceStack src = ctx.getSource();
+        String command = StringArgumentType.getString(ctx, "command");
+
+        UUID boundUuid = null;
+        String boundName = "qualquer um";
+        if (boundPlayerName != null && !boundPlayerName.equalsIgnoreCase("none")) {
+            ServerPlayer target = src.getServer().getPlayerList().getPlayerByName(boundPlayerName);
+            if (target != null) {
+                boundUuid = target.getUUID();
+                boundName = target.getGameProfile().getName();
+            } else {
+                try {
+                    Optional<com.mojang.authlib.GameProfile> profile = src.getServer().getProfileCache().get(boundPlayerName);
+                    if (profile.isPresent()) {
+                        boundUuid = profile.get().getId();
+                        boundName = profile.get().getName();
+                    } else {
+                        boundUuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + boundPlayerName).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        boundName = boundPlayerName;
+                    }
+                } catch (Exception e) {
+                    boundName = boundPlayerName;
+                }
+            }
+        }
+
+        List<Map<String, Object>> actions = new ArrayList<>();
+        Map<String, Object> action = new LinkedHashMap<>();
+        action.put("type", "run_server_command");
+        action.put("command", command);
+        actions.add(action);
+
+        KeyRecord keyRec = KeyService.generateCustomKey(actions, maxUses, boundUuid, -1);
+
+        String finalBoundName = boundName;
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Command key generated successfully: ", "Chave de comando gerada com sucesso: ")
+                + "§e" + keyRec.getCode()
+                + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+        return 1;
+    }
+
+    private static int executeGenerateItemKey(CommandContext<CommandSourceStack> ctx, int maxUses, Collection<GameProfile> targets) {
+        CommandSourceStack src = ctx.getSource();
+        String itemId = StringArgumentType.getString(ctx, "item_id");
+        int amount = IntegerArgumentType.getInteger(ctx, "amount");
+
+        UUID boundUuid = null;
+        String boundName = "qualquer um";
+        if (targets != null && !targets.isEmpty()) {
+            GameProfile profile = targets.iterator().next();
+            boundUuid = profile.getId();
+            boundName = profile.getName();
+        }
+
+        List<Map<String, Object>> actions = new ArrayList<>();
+        Map<String, Object> action = new LinkedHashMap<>();
+        action.put("type", "give_item");
+        action.put("item", itemId);
+        action.put("amount", amount);
+        actions.add(action);
+
+        KeyRecord keyRec = KeyService.generateCustomKey(actions, maxUses, boundUuid, -1);
+
+        String finalBoundName = boundName;
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Item key generated successfully: ", "Chave de item gerada com sucesso: ")
+                + "§e" + keyRec.getCode()
+                + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+        return 1;
+    }
+
+    private static int executeGenerateItemStackKey(CommandContext<CommandSourceStack> ctx, int maxUses, Collection<GameProfile> targets) {
+        CommandSourceStack src = ctx.getSource();
+        if (!(src.getEntity() instanceof ServerPlayer player)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.playerOnly));
+            return 0;
+        }
+
+        ItemStack stack = player.getMainHandItem();
+        if (stack.isEmpty()) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("You must hold an item in your main hand.", "Você precisa segurar um item na sua mão principal.")));
+            return 0;
+        }
+
+        UUID boundUuid = null;
+        String boundName = "qualquer um";
+        if (targets != null && !targets.isEmpty()) {
+            GameProfile profile = targets.iterator().next();
+            boundUuid = profile.getId();
+            boundName = profile.getName();
+        }
+
+        CompoundTag tag = (CompoundTag) stack.copy().save(player.getServer().registryAccess());
+        String stackSnbt = NbtUtils.structureToSnbt(tag);
+
+        List<Map<String, Object>> actions = new ArrayList<>();
+        Map<String, Object> action = new LinkedHashMap<>();
+        action.put("type", "give_item_stack");
+        action.put("stack_snbt", stackSnbt);
+        actions.add(action);
+
+        KeyRecord keyRec = KeyService.generateCustomKey(actions, maxUses, boundUuid, -1);
+
+        String finalBoundName = boundName;
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("ItemStack key generated successfully: ", "Chave de itemstack gerada com sucesso: ")
+                + "§e" + keyRec.getCode()
+                + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+        return 1;
+    }
+
+    private static int executeGenerateCustomKey(CommandContext<CommandSourceStack> ctx, int maxUses, String boundPlayerName) {
+        CommandSourceStack src = ctx.getSource();
+        String json = StringArgumentType.getString(ctx, "actions_json");
+
+        UUID boundUuid = null;
+        String boundName = "qualquer um";
+        if (boundPlayerName != null && !boundPlayerName.equalsIgnoreCase("none")) {
+            ServerPlayer target = src.getServer().getPlayerList().getPlayerByName(boundPlayerName);
+            if (target != null) {
+                boundUuid = target.getUUID();
+                boundName = target.getGameProfile().getName();
+            } else {
+                try {
+                    Optional<com.mojang.authlib.GameProfile> profile = src.getServer().getProfileCache().get(boundPlayerName);
+                    if (profile.isPresent()) {
+                        boundUuid = profile.get().getId();
+                        boundName = profile.get().getName();
+                    } else {
+                        boundUuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + boundPlayerName).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        boundName = boundPlayerName;
+                    }
+                } catch (Exception e) {
+                    boundName = boundPlayerName;
+                }
+            }
+        }
+
+        List<Map<String, Object>> actions;
+        try {
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            java.lang.reflect.Type type = new com.google.gson.reflect.TypeToken<List<Map<String, Object>>>(){}.getType();
+            actions = gson.fromJson(json, type);
+            if (actions == null || actions.isEmpty()) {
+                src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("The actions JSON list cannot be empty.", "A lista de ações em JSON não pode ser vazia.")));
+                return 0;
+            }
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Invalid JSON format for actions: ", "Formato de JSON inválido para as ações: ") + e.getMessage()));
+            return 0;
+        }
+
+        KeyRecord keyRec = KeyService.generateCustomKey(actions, maxUses, boundUuid, -1);
+
+        String finalBoundName = boundName;
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Custom action key generated successfully: ", "Chave de ações personalizadas gerada com sucesso: ")
+                + "§e" + keyRec.getCode()
+                + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
                 + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
         return 1;
     }
