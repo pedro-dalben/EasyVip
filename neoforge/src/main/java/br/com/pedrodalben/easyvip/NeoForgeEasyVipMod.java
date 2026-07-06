@@ -107,10 +107,12 @@ public final class NeoForgeEasyVipMod {
             return;
         }
 
+        String instanceId = KeyService.getPhysicalKeyInstanceId(stack);
+
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);
 
-        KeyService.RedeemResult result = KeyService.redeemKey(player, keyCode, false);
+        KeyService.RedeemResult result = KeyService.redeemPhysicalKey(player, keyCode, instanceId);
         if (result == KeyService.RedeemResult.SUCCESS) {
             stack.shrink(1);
             player.sendSystemMessage(Component.literal("§7[§eEasyVip§7] §aChave usada com sucesso."));

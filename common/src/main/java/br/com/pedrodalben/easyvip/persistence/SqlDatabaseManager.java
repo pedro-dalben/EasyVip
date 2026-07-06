@@ -75,9 +75,13 @@ public final class SqlDatabaseManager {
                     expiry_time BIGINT NOT NULL DEFAULT -1,
                     used_by_json MEDIUMTEXT,
                     last_used_at_by_json MEDIUMTEXT,
-                    actions_json MEDIUMTEXT
+                    actions_json MEDIUMTEXT,
+                    consumed_instances_json MEDIUMTEXT
                 )
             """);
+
+            // Schema migrations for existing databases
+            ensureColumnExists(conn, "easyvip_keys", "consumed_instances_json", "MEDIUMTEXT");
 
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS easyvip_pending_variants (
@@ -109,6 +113,23 @@ public final class SqlDatabaseManager {
             """);
         } catch (SQLException e) {
             throw new RuntimeException("Failed to create database tables", e);
+        }
+    }
+
+    private static void ensureColumnExists(Connection conn, String table, String column, String type) {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && rs.getInt(1) == 0) {
+                    try (Statement alter = conn.createStatement()) {
+                        alter.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[EasyVip-SQL] Failed to ensure column " + table + "." + column + ": " + e.getMessage());
         }
     }
 
@@ -195,18 +216,24 @@ public final class SqlDatabaseManager {
 
     public static KeyRecord getKey(String code) {
         LOCK.readLock().lock();
-        try (Connection conn = getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT * FROM easyvip_keys WHERE code = ?")) {
+        try (Connection conn = getConnection()) {
+            return getKey(conn, code);
+        } catch (SQLException e) {
+            System.err.println("[EasyVip-SQL] Error reading key " + br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(code) + ": " + e.getMessage());
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        return null;
+    }
+
+    private static KeyRecord getKey(Connection conn, String code) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT * FROM easyvip_keys WHERE code = ?")) {
             ps.setString(1, code);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return mapKeyRecord(rs);
                 }
             }
-        } catch (SQLException e) {
-            System.err.println("[EasyVip-SQL] Error reading key " + code + ": " + e.getMessage());
-        } finally {
-            LOCK.readLock().unlock();
         }
         return null;
     }
@@ -235,28 +262,59 @@ public final class SqlDatabaseManager {
                  REPLACE INTO easyvip_keys
                  (code, type, tier_id, duration, reward_key_id, max_uses, used_count,
                   bound_player_uuid, created_time, expiry_time, used_by_json,
-                  last_used_at_by_json, actions_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  last_used_at_by_json, actions_json, consumed_instances_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  """)) {
-            ps.setString(1, record.getCode());
-            ps.setString(2, record.getType());
-            ps.setString(3, record.getTierId());
-            ps.setString(4, record.getDuration());
-            ps.setString(5, record.getRewardKeyId());
-            ps.setInt(6, record.getMaxUses());
-            ps.setInt(7, record.getUsedCount());
-            ps.setString(8, record.getBoundPlayerUuid() != null ? record.getBoundPlayerUuid().toString() : null);
-            ps.setLong(9, record.getCreatedTime());
-            ps.setLong(10, record.getExpiryTime());
-            ps.setString(11, GSON.toJson(record.getUsedBy()));
-            ps.setString(12, GSON.toJson(record.getLastUsedAtBy()));
-            ps.setString(13, GSON.toJson(record.getActions()));
+            setKeyStatement(ps, record);
             ps.executeUpdate();
         } catch (SQLException e) {
-            System.err.println("[EasyVip-SQL] Error saving key " + record.getCode() + ": " + e.getMessage());
+            System.err.println("[EasyVip-SQL] Error saving key " + br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(record.getCode()) + ": " + e.getMessage());
         } finally {
             LOCK.writeLock().unlock();
         }
+    }
+
+    public static KeyRecord putKeyIfAbsent(KeyRecord record) {
+        LOCK.writeLock().lock();
+        try (Connection conn = getConnection()) {
+            KeyRecord existing = getKey(conn, record.getCode());
+            if (existing != null) {
+                return existing;
+            }
+            try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO easyvip_keys
+                (code, type, tier_id, duration, reward_key_id, max_uses, used_count,
+                 bound_player_uuid, created_time, expiry_time, used_by_json,
+                 last_used_at_by_json, actions_json, consumed_instances_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """)) {
+                setKeyStatement(ps, record);
+                ps.executeUpdate();
+            }
+            return null;
+        } catch (SQLException e) {
+            System.err.println("[EasyVip-SQL] Error inserting key " + br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(record.getCode()) + ": " + e.getMessage());
+            return record;
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+    }
+
+    private static void setKeyStatement(PreparedStatement ps, KeyRecord record) throws SQLException {
+        ps.setString(1, record.getCode());
+        ps.setString(2, record.getType());
+        ps.setString(3, record.getTierId());
+        ps.setString(4, record.getDuration());
+        ps.setString(5, record.getRewardKeyId());
+        ps.setInt(6, record.getMaxUses());
+        ps.setInt(7, record.getUsedCount());
+        ps.setString(8, record.getBoundPlayerUuid() != null ? record.getBoundPlayerUuid().toString() : null);
+        ps.setLong(9, record.getCreatedTime());
+        ps.setLong(10, record.getExpiryTime());
+        ps.setString(11, GSON.toJson(record.getUsedBy()));
+        ps.setString(12, GSON.toJson(record.getLastUsedAtBy()));
+        ps.setString(13, GSON.toJson(record.getActions()));
+        ps.setString(14, GSON.toJson(record.getConsumedInstances()));
     }
 
     public static void removeKey(String code) {
@@ -266,7 +324,7 @@ public final class SqlDatabaseManager {
             ps.setString(1, code);
             ps.executeUpdate();
         } catch (SQLException e) {
-            System.err.println("[EasyVip-SQL] Error removing key " + code + ": " + e.getMessage());
+            System.err.println("[EasyVip-SQL] Error removing key " + br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(code) + ": " + e.getMessage());
         } finally {
             LOCK.writeLock().unlock();
         }
@@ -307,6 +365,13 @@ public final class SqlDatabaseManager {
             Type type = new TypeToken<List<Map<String, Object>>>(){}.getType();
             List<Map<String, Object>> actions = GSON.fromJson(actionsJson, type);
             if (actions != null) record.setActions(actions);
+        }
+
+        String consumedInstancesJson = rs.getString("consumed_instances_json");
+        if (consumedInstancesJson != null && !consumedInstancesJson.isEmpty()) {
+            Type type = new TypeToken<Set<String>>(){}.getType();
+            Set<String> consumedInstances = GSON.fromJson(consumedInstancesJson, type);
+            if (consumedInstances != null) record.setConsumedInstances(consumedInstances);
         }
 
         return record;
@@ -482,7 +547,7 @@ public final class SqlDatabaseManager {
             ps.setLong(2, record.getTimestamp());
             ps.setString(3, record.getOperator());
             ps.setString(4, record.getAction());
-            ps.setString(5, record.getDetails());
+            ps.setString(5, br.com.pedrodalben.easyvip.util.KeySecurity.sanitizeAuditDetails(record.getDetails()));
             ps.executeUpdate();
         } catch (SQLException e) {
             System.err.println("[EasyVip-SQL] Error writing audit log: " + e.getMessage());

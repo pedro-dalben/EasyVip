@@ -49,7 +49,7 @@ public final class PersistenceManager {
                 EasyVipConfig.integrations.sqlUsername,
                 EasyVipConfig.integrations.sqlPassword
             );
-            System.out.println("[EasyVip] SQL persistence enabled: " + EasyVipConfig.integrations.sqlUrl);
+            System.out.println("[EasyVip] SQL persistence enabled");
             return;
         }
 
@@ -66,6 +66,7 @@ public final class PersistenceManager {
             SqlDatabaseManager.shutdown();
             return;
         }
+        flush();
         LOCK.writeLock().lock();
         try {
             saveVipsSync();
@@ -77,6 +78,14 @@ public final class PersistenceManager {
             LOCK.writeLock().unlock();
         }
         EXECUTOR.shutdown();
+        try {
+            if (!EXECUTOR.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                EXECUTOR.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            EXECUTOR.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     public static void flush() {
@@ -294,16 +303,25 @@ public final class PersistenceManager {
             String jsonStr = GSON.toJson(data);
             Path tempFile = file.getParent().resolve(file.getFileName().toString() + ".tmp");
 
-            // Write to tmp
-            Files.writeString(tempFile, jsonStr);
+            // Write to tmp and sync to storage
+            Files.writeString(tempFile, jsonStr, java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING, java.nio.file.StandardOpenOption.WRITE);
+            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(tempFile,
+                    java.nio.file.StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
 
             // Create backup if target file exists
             if (Files.exists(file)) {
                 Files.copy(file, backup, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            // Atomic move/rename
-            Files.move(tempFile, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            // Atomic move/rename with fallback
+            try {
+                Files.move(tempFile, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException atomicEx) {
+                Files.move(tempFile, file, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             System.err.println("[EasyVip] Failed to save file atomically: " + file.getFileName() + ": " + e.getMessage());
         }
@@ -358,7 +376,8 @@ public final class PersistenceManager {
         }
         LOCK.readLock().lock();
         try {
-            return keys.get(code);
+            KeyRecord record = keys.get(code);
+            return record != null ? record.copy() : null;
         } finally {
             LOCK.readLock().unlock();
         }
@@ -376,6 +395,27 @@ public final class PersistenceManager {
             LOCK.writeLock().unlock();
         }
         saveKeys();
+    }
+
+    public static KeyRecord putKeyIfAbsent(KeyRecord keyRecord) {
+        if (sqlMode) {
+            return SqlDatabaseManager.putKeyIfAbsent(keyRecord);
+        }
+        KeyRecord existing;
+        LOCK.writeLock().lock();
+        try {
+            existing = keys.get(keyRecord.getCode());
+            if (existing == null) {
+                keys.put(keyRecord.getCode(), keyRecord);
+            }
+        } finally {
+            LOCK.writeLock().unlock();
+        }
+        if (existing == null) {
+            saveKeys();
+            return null;
+        }
+        return existing.copy();
     }
 
     public static void removeKey(String code) {
@@ -398,7 +438,11 @@ public final class PersistenceManager {
         }
         LOCK.readLock().lock();
         try {
-            return new ArrayList<>(keys.values());
+            List<KeyRecord> result = new ArrayList<>();
+            for (KeyRecord record : keys.values()) {
+                result.add(record.copy());
+            }
+            return result;
         } finally {
             LOCK.readLock().unlock();
         }
