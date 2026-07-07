@@ -76,6 +76,15 @@ Compilar só o Java do módulo NeoForge:
 7. Um scheduler processa expiração de VIPs e limpeza de pendências periodicamente.
 8. VIPs expirados também são limpos no login e na inicialização do servidor.
 
+## WebStore
+
+- [Documentação técnica do fulfillment](docs/integrations/webstore-fulfillment.md)
+- [Runbook operacional do fulfillment](docs/operations/webstore-fulfillment-runbook.md)
+- [Padrão multi-servidor](docs/integrations/multi-server-webstore.md)
+- [Visão geral do sync WebStore](docs/WEBSTORE.md)
+
+O fulfillment atual é somente saída: EasyVip faz polling HTTPS para o Rails e não abre listener HTTP nem usa RCON.
+
 ### Chave física
 
 O mod lê `DataComponents.CUSTOM_DATA` apenas no item configurado em `common.toml`:

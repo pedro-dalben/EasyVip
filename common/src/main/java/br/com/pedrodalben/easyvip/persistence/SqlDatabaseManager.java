@@ -114,14 +114,17 @@ public final class SqlDatabaseManager {
                 CREATE TABLE IF NOT EXISTS webstore_fulfillments (
                     fulfillment_id VARCHAR(36) PRIMARY KEY,
                     order_id VARCHAR(255) NOT NULL,
+                    origin_server_id VARCHAR(255) NOT NULL,
                     server_id VARCHAR(255) NOT NULL,
                     minecraft_uuid VARCHAR(36) NOT NULL,
                     minecraft_username VARCHAR(255) NOT NULL DEFAULT '',
                     payload_digest VARCHAR(128) NOT NULL,
                     status VARCHAR(50) NOT NULL DEFAULT 'pending',
                     request_key_id VARCHAR(255) DEFAULT NULL,
+                    claim_token VARCHAR(255) DEFAULT NULL,
                     created_at BIGINT NOT NULL DEFAULT 0,
                     claimed_at BIGINT DEFAULT NULL,
+                    lease_expires_at BIGINT DEFAULT NULL,
                     completed_at BIGINT DEFAULT NULL,
                     failed_at BIGINT DEFAULT NULL,
                     failure_code VARCHAR(80) DEFAULT NULL,
@@ -147,7 +150,10 @@ public final class SqlDatabaseManager {
             // Schema migrations for existing databases
             ensureColumnExists(conn, "easyvip_keys", "consumed_instances_json", "MEDIUMTEXT");
             ensureColumnExists(conn, "webstore_fulfillments", "server_id", "VARCHAR(255) NOT NULL DEFAULT ''");
+            ensureColumnExists(conn, "webstore_fulfillments", "origin_server_id", "VARCHAR(255) NOT NULL DEFAULT ''");
             ensureColumnExists(conn, "webstore_fulfillments", "claimed_at", "BIGINT DEFAULT NULL");
+            ensureColumnExists(conn, "webstore_fulfillments", "claim_token", "VARCHAR(255) DEFAULT NULL");
+            ensureColumnExists(conn, "webstore_fulfillments", "lease_expires_at", "BIGINT DEFAULT NULL");
             ensureColumnExists(conn, "webstore_fulfillments", "completed_at", "BIGINT DEFAULT NULL");
             ensureColumnExists(conn, "webstore_fulfillments", "failed_at", "BIGINT DEFAULT NULL");
             ensureColumnExists(conn, "webstore_fulfillments", "failure_code", "VARCHAR(80) DEFAULT NULL");
@@ -881,19 +887,22 @@ public final class SqlDatabaseManager {
     public static boolean upsertWebStoreFulfillment(Connection conn, FulfillmentRecord fulfillment) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO webstore_fulfillments (
-                    fulfillment_id, order_id, server_id, minecraft_uuid, minecraft_username,
-                    payload_digest, status, request_key_id, created_at, claimed_at,
-                    completed_at, failed_at, failure_code, error_message, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    fulfillment_id, order_id, origin_server_id, server_id, minecraft_uuid, minecraft_username,
+                    payload_digest, status, request_key_id, claim_token, created_at, claimed_at,
+                    lease_expires_at, completed_at, failed_at, failure_code, error_message, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     order_id = VALUES(order_id),
+                    origin_server_id = VALUES(origin_server_id),
                     server_id = VALUES(server_id),
                     minecraft_uuid = VALUES(minecraft_uuid),
                     minecraft_username = VALUES(minecraft_username),
                     payload_digest = VALUES(payload_digest),
                     status = VALUES(status),
                     request_key_id = VALUES(request_key_id),
+                    claim_token = VALUES(claim_token),
                     claimed_at = VALUES(claimed_at),
+                    lease_expires_at = VALUES(lease_expires_at),
                     completed_at = VALUES(completed_at),
                     failed_at = VALUES(failed_at),
                     failure_code = VALUES(failure_code),
@@ -902,31 +911,38 @@ public final class SqlDatabaseManager {
                 """)) {
             ps.setString(1, fulfillment.getFulfillmentId());
             ps.setString(2, fulfillment.getOrderId());
-            ps.setString(3, fulfillment.getServerId());
-            ps.setString(4, fulfillment.getMinecraftUuid());
-            ps.setString(5, fulfillment.getMinecraftUsername());
-            ps.setString(6, fulfillment.getPayloadDigest());
-            ps.setString(7, fulfillment.getStatus());
-            ps.setString(8, fulfillment.getRequestKeyId());
-            ps.setLong(9, fulfillment.getCreatedAt());
+            ps.setString(3, fulfillment.getOriginServerId());
+            ps.setString(4, fulfillment.getServerId());
+            ps.setString(5, fulfillment.getMinecraftUuid());
+            ps.setString(6, fulfillment.getMinecraftUsername());
+            ps.setString(7, fulfillment.getPayloadDigest());
+            ps.setString(8, fulfillment.getStatus());
+            ps.setString(9, fulfillment.getRequestKeyId());
+            ps.setString(10, fulfillment.getClaimToken());
+            ps.setLong(11, fulfillment.getCreatedAt());
             if (fulfillment.getClaimedAt() != null) {
-                ps.setLong(10, fulfillment.getClaimedAt());
-            } else {
-                ps.setNull(10, Types.BIGINT);
-            }
-            if (fulfillment.getCompletedAt() != null) {
-                ps.setLong(11, fulfillment.getCompletedAt());
-            } else {
-                ps.setNull(11, Types.BIGINT);
-            }
-            if (fulfillment.getFailedAt() != null) {
-                ps.setLong(12, fulfillment.getFailedAt());
+                ps.setLong(12, fulfillment.getClaimedAt());
             } else {
                 ps.setNull(12, Types.BIGINT);
             }
-            ps.setString(13, fulfillment.getFailureCode());
-            ps.setString(14, fulfillment.getErrorMessage());
-            ps.setLong(15, fulfillment.getUpdatedAt());
+            if (fulfillment.getLeaseExpiresAt() != null) {
+                ps.setLong(13, fulfillment.getLeaseExpiresAt());
+            } else {
+                ps.setNull(13, Types.BIGINT);
+            }
+            if (fulfillment.getCompletedAt() != null) {
+                ps.setLong(14, fulfillment.getCompletedAt());
+            } else {
+                ps.setNull(14, Types.BIGINT);
+            }
+            if (fulfillment.getFailedAt() != null) {
+                ps.setLong(15, fulfillment.getFailedAt());
+            } else {
+                ps.setNull(15, Types.BIGINT);
+            }
+            ps.setString(16, fulfillment.getFailureCode());
+            ps.setString(17, fulfillment.getErrorMessage());
+            ps.setLong(18, fulfillment.getUpdatedAt());
             ps.executeUpdate();
             return true;
         }
@@ -980,15 +996,23 @@ public final class SqlDatabaseManager {
         FulfillmentRecord rec = new FulfillmentRecord();
         rec.setFulfillmentId(rs.getString("fulfillment_id"));
         rec.setOrderId(rs.getString("order_id"));
+        String originServerId = rs.getString("origin_server_id");
+        if (originServerId == null || originServerId.isBlank()) {
+            originServerId = rs.getString("server_id");
+        }
+        rec.setOriginServerId(originServerId);
         rec.setServerId(rs.getString("server_id"));
         rec.setMinecraftUuid(rs.getString("minecraft_uuid"));
         rec.setMinecraftUsername(rs.getString("minecraft_username"));
         rec.setPayloadDigest(rs.getString("payload_digest"));
         rec.setStatus(rs.getString("status"));
         rec.setRequestKeyId(rs.getString("request_key_id"));
+        rec.setClaimToken(rs.getString("claim_token"));
         rec.setCreatedAt(rs.getLong("created_at"));
         long claimedAt = rs.getLong("claimed_at");
         if (!rs.wasNull()) rec.setClaimedAt(claimedAt);
+        long leaseExpiresAt = rs.getLong("lease_expires_at");
+        if (!rs.wasNull()) rec.setLeaseExpiresAt(leaseExpiresAt);
         long completedAt = rs.getLong("completed_at");
         if (!rs.wasNull()) rec.setCompletedAt(completedAt);
         long failedAt = rs.getLong("failed_at");

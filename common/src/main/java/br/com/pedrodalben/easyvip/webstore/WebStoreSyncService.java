@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -165,15 +166,30 @@ public final class WebStoreSyncService {
     }
 
     private static String buildSyncPayload(UUID uuid, String username, String ipAddress) {
+        String serverId = resolveServerId();
+        String canonicalUsername = username == null ? "" : username.toLowerCase(Locale.ROOT);
         StringBuilder json = new StringBuilder();
         json.append("{\n");
         json.append("  \"minecraft_uuid\": \"").append(escapeJson(uuid.toString())).append("\",\n");
-        json.append("  \"username\": \"").append(escapeJson(username)).append("\"");
+        json.append("  \"username\": \"").append(escapeJson(username)).append("\",\n");
+        json.append("  \"canonical_username\": \"").append(escapeJson(canonicalUsername)).append("\",\n");
+        json.append("  \"server_id\": \"").append(escapeJson(serverId)).append("\",\n");
+        json.append("  \"identity_status\": \"observed\"");
         if (ipAddress != null && !ipAddress.isBlank()) {
             json.append(",\n  \"ip_address\": \"").append(escapeJson(ipAddress)).append("\"");
         }
         json.append("\n}");
         return json.toString();
+    }
+
+    private static String resolveServerId() {
+        if (EasyVipConfig.webstore.serverId != null && !EasyVipConfig.webstore.serverId.isBlank()) {
+            return EasyVipConfig.webstore.serverId;
+        }
+        if (EasyVipConfig.fulfillment.serverId != null && !EasyVipConfig.fulfillment.serverId.isBlank()) {
+            return EasyVipConfig.fulfillment.serverId;
+        }
+        return "";
     }
 
     public static void registerChallenge(UUID uuid, String code) {

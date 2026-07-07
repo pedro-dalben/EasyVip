@@ -7,3 +7,5 @@ out/
 *.log
 *.tmp
 *.bak
+.agents
+.kilocode

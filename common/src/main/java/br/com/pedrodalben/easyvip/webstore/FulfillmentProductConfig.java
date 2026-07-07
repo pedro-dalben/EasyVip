@@ -8,7 +8,6 @@ public final class FulfillmentProductConfig {
     public String tierId;
     public String duration;
     public String rewardKeyId;
-    public int quantityPerPurchase = 1;
     public int maxUses = 1;
     public String expiresAfter;
     public boolean bindToPlayer = true;

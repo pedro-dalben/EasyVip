@@ -29,6 +29,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -84,13 +85,13 @@ public final class WebStoreFulfillmentService {
 
         if (!isConfigured()) {
             setUnavailable("disabled");
-            log("UNAVAILABLE | fulfillment disabled or missing secret/token");
+            log("UNAVAILABLE | " + serverLogPrefix() + "fulfillment disabled or missing secret/token");
             return;
         }
 
         if (!isSqlHealthy()) {
             setUnavailable("sql_unavailable");
-            log("UNAVAILABLE | SQL mode not active or unhealthy");
+            log("UNAVAILABLE | " + serverLogPrefix() + "SQL mode not active or unhealthy");
             PersistenceManager.log("WebStore", "fulfillment_unavailable", "SQL mode not active or unhealthy");
             return;
         }
@@ -103,7 +104,7 @@ public final class WebStoreFulfillmentService {
         running = true;
         lastState = "running";
         scheduleNext(0L);
-        log("STARTED | server_id=" + EasyVipConfig.fulfillment.serverId);
+        log("STARTED | server_id=" + EasyVipConfig.fulfillment.serverId + " key_id=" + EasyVipConfig.fulfillment.keyId);
     }
 
     public static synchronized void reload(Path configDir) {
@@ -114,7 +115,15 @@ public final class WebStoreFulfillmentService {
     public static synchronized void stop() {
         running = false;
         if (scheduler != null) {
-            scheduler.shutdownNow();
+            scheduler.shutdown();
+            try {
+                if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
+                    scheduler.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                scheduler.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
             scheduler = null;
         }
         lastState = "stopped";
@@ -130,6 +139,8 @@ public final class WebStoreFulfillmentService {
 
     public static String statusSummary() {
         return "state=" + lastState
+                + " server_id=" + EasyVipConfig.fulfillment.serverId
+                + " key_id=" + EasyVipConfig.fulfillment.keyId
                 + " sql=" + (isSqlHealthy() ? "healthy" : "unavailable")
                 + " last_poll=" + formatTs(lastPollAt)
                 + " last_success=" + formatTs(lastSuccessAt)
@@ -140,6 +151,15 @@ public final class WebStoreFulfillmentService {
     }
 
     public static void pollNowForTest() {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (IN_FLIGHT.get() && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(25L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
         runCycle();
     }
 
@@ -149,6 +169,7 @@ public final class WebStoreFulfillmentService {
         String token = resolveToken();
         return cfg.enabled
                 && cfg.serverId != null && !cfg.serverId.isBlank()
+                && cfg.keyId != null && !cfg.keyId.isBlank()
                 && secret != null && !secret.isBlank()
                 && token != null && !token.isBlank();
     }
@@ -185,7 +206,7 @@ public final class WebStoreFulfillmentService {
             lastErrorCode = "scheduler_crash";
             consecutiveFailures++;
             lastState = "scheduler_error";
-            log("ERROR | scheduler crash: " + t.getClass().getSimpleName());
+            log("ERROR | " + serverLogPrefix() + "scheduler crash: " + t.getClass().getSimpleName());
             scheduleNext(nextBackoffMillis());
         }
     }
@@ -204,14 +225,14 @@ public final class WebStoreFulfillmentService {
             if (!isConfigured()) {
                 lastState = "unavailable";
                 lastErrorCode = "fulfillment_unavailable";
-                log("UNAVAILABLE | configuration missing secret/token/server_id");
+                log("UNAVAILABLE | " + serverLogPrefix() + "configuration missing secret/token/server_id/key_id");
                 scheduleNext(EasyVipConfig.fulfillment.pollIntervalSeconds * 1000L);
                 return;
             }
             if (!isSqlHealthy()) {
                 lastState = "sql_unavailable";
                 lastErrorCode = "sql_unavailable";
-                log("UNAVAILABLE | SQL mode not active or unhealthy");
+                log("UNAVAILABLE | " + serverLogPrefix() + "SQL mode not active or unhealthy");
                 scheduleNext(EasyVipConfig.fulfillment.pollIntervalSeconds * 1000L);
                 return;
             }
@@ -219,7 +240,9 @@ public final class WebStoreFulfillmentService {
             ClaimResponse claim = claimPending();
             if (claim == null) {
                 lastState = "transient_error";
-                lastErrorCode = "claim_failed";
+                if (lastErrorCode == null || lastErrorCode.isBlank()) {
+                    lastErrorCode = "claim_failed";
+                }
                 lastErrorAt = System.currentTimeMillis();
                 consecutiveFailures++;
                 scheduleNext(nextBackoffMillis());
@@ -231,7 +254,7 @@ public final class WebStoreFulfillmentService {
                 lastState = "empty";
                 lastEmptyAt = System.currentTimeMillis();
                 consecutiveFailures = 0;
-                log("EMPTY | no fulfillments");
+                log("EMPTY | " + serverLogPrefix() + "no fulfillments");
                 scheduleNext(EasyVipConfig.fulfillment.pollIntervalSeconds * 1000L);
                 return;
             }
@@ -245,7 +268,7 @@ public final class WebStoreFulfillmentService {
                     sawTransient = true;
                     lastErrorCode = outcome.errorCode;
                     lastErrorAt = System.currentTimeMillis();
-                    log("RETRY | fulfillment_id=" + fulfillment.fulfillmentId + " code=" + outcome.errorCode);
+                    log("RETRY | " + serverLogPrefix() + "fulfillment_id=" + fulfillment.fulfillmentId + " code=" + outcome.errorCode);
                     continue;
                 }
                 if (outcome.processed) {
@@ -284,8 +307,12 @@ public final class WebStoreFulfillmentService {
                 return FulfillmentOutcome.transientError("ledger_unavailable");
             }
 
-            if (ledger.status.equals("conflict") || ledger.status.equals("invalid_sku") || ledger.status.equals("invalid_config")) {
-                failFulfillment(claim.fulfillmentId, ledger.errorCode, ledger.errorMessage);
+            if (ledger.status.equals("conflict")
+                    || ledger.status.equals("invalid_sku")
+                    || ledger.status.equals("invalid_config")
+                    || ledger.status.equals("server_mismatch")) {
+                lastErrorCode = ledger.errorCode;
+                failFulfillment(claim.fulfillmentId, ledger.fulfillment.getClaimToken(), ledger.errorCode, ledger.errorMessage);
                 return FulfillmentOutcome.definitiveFailure(ledger.errorCode);
             }
 
@@ -294,7 +321,7 @@ public final class WebStoreFulfillmentService {
             }
 
             if ("completed".equalsIgnoreCase(ledger.fulfillment.getStatus())) {
-                log("ALREADY_COMPLETE | fulfillment_id=" + ledger.fulfillment.getFulfillmentId());
+                log("ALREADY_COMPLETE | " + serverLogPrefix() + "fulfillment_id=" + ledger.fulfillment.getFulfillmentId());
                 return FulfillmentOutcome.processed();
             }
 
@@ -308,8 +335,18 @@ public final class WebStoreFulfillmentService {
             }
             if (!complete.success) {
                 if (complete.transientError) {
+                    if ("lease_expired".equals(complete.errorCode)) {
+                        SqlDatabaseManager.withConnection(conn -> {
+                            FulfillmentRecord record = cloneRecord(ledger.fulfillment);
+                            record.setStatus("lease_expired");
+                            record.setUpdatedAt(System.currentTimeMillis());
+                            SqlDatabaseManager.upsertWebStoreFulfillment(conn, record);
+                            return null;
+                        });
+                    }
                     return FulfillmentOutcome.transientError(complete.errorCode);
                 }
+                lastErrorCode = complete.errorCode;
                 return FulfillmentOutcome.definitiveFailure(complete.errorCode);
             }
 
@@ -317,12 +354,12 @@ public final class WebStoreFulfillmentService {
                 markFulfillmentCompleted(conn, ledger.fulfillment);
                 return null;
             });
-            log("COMPLETE_OK | fulfillment_id=" + claim.fulfillmentId + " items=" + ledger.items.size());
+            log("COMPLETE_OK | " + serverLogPrefix() + "fulfillment_id=" + claim.fulfillmentId + " items=" + ledger.items.size());
             PersistenceManager.log("WebStore", "fulfillment_complete", "Fulfillment " + claim.fulfillmentId + " confirmed");
             return FulfillmentOutcome.processed();
         } catch (RuntimeException e) {
             lastErrorCode = "processing_exception";
-            log("ERROR | fulfillment_id=" + claim.fulfillmentId + " | " + e.getClass().getSimpleName());
+            log("ERROR | " + serverLogPrefix() + "fulfillment_id=" + claim.fulfillmentId + " | " + e.getClass().getSimpleName());
             return FulfillmentOutcome.transientError("processing_exception");
         }
     }
@@ -333,6 +370,7 @@ public final class WebStoreFulfillmentService {
             FulfillmentRecord existing = loadWebStoreFulfillment(conn, claim.fulfillmentId);
             String payloadDigest = claim.payloadDigest();
             long now = System.currentTimeMillis();
+            String serverId = claim.resolveServerId();
 
             if (existing != null && !Objects.equals(existing.getPayloadDigest(), payloadDigest)) {
                 FulfillmentRecord conflict = cloneRecord(existing);
@@ -348,17 +386,34 @@ public final class WebStoreFulfillmentService {
             FulfillmentRecord ledger = existing != null ? cloneRecord(existing) : new FulfillmentRecord();
             ledger.setFulfillmentId(claim.fulfillmentId);
             ledger.setOrderId(claim.orderId);
-            ledger.setServerId(EasyVipConfig.fulfillment.serverId);
+            ledger.setOriginServerId(serverId);
+            ledger.setServerId(serverId);
             ledger.setMinecraftUuid(claim.minecraftUuid);
             ledger.setMinecraftUsername(claim.minecraftUsername != null ? claim.minecraftUsername : "");
             ledger.setPayloadDigest(payloadDigest);
             ledger.setRequestKeyId(EasyVipConfig.fulfillment.keyId);
+            ledger.setClaimToken(claim.claimToken);
             ledger.setCreatedAt(existing != null ? existing.getCreatedAt() : now);
             ledger.setClaimedAt(now);
+            ledger.setLeaseExpiresAt(claim.leaseExpiresAt);
             ledger.setUpdatedAt(now);
+            if (!EasyVipConfig.fulfillment.serverId.equals(serverId)) {
+                ledger.setStatus("server_mismatch");
+                ledger.setFailureCode("server_mismatch");
+                ledger.setErrorMessage("fulfillment belongs to another server");
+                ledger.setUpdatedAt(now);
+                SqlDatabaseManager.upsertWebStoreFulfillment(conn, ledger);
+                conn.commit();
+                return FulfillmentLedger.invalidConfig(ledger, "server_mismatch", "fulfillment belongs to another server");
+            }
             if (existing == null) {
                 ledger.setStatus("processing");
             } else if ("completed".equalsIgnoreCase(existing.getStatus()) || "awaiting_complete".equalsIgnoreCase(existing.getStatus())) {
+                ledger.setStatus(existing.getStatus());
+                ledger.setClaimToken(claim.claimToken);
+                ledger.setLeaseExpiresAt(claim.leaseExpiresAt);
+                ledger.setUpdatedAt(now);
+                SqlDatabaseManager.upsertWebStoreFulfillment(conn, ledger);
                 conn.commit();
                 return FulfillmentLedger.ready(ledger, cloneItems(existing.getItems()));
             }
@@ -403,17 +458,27 @@ public final class WebStoreFulfillmentService {
                 itemRecord.setUpdatedAt(now);
                 SqlDatabaseManager.upsertWebStoreFulfillmentItem(conn, itemRecord);
 
-                KeyRecord keyRecord = generateKeyRecordForProduct(product, claim.minecraftUuid, now);
-                keyRecord.setCode(generateUniqueKeyCode(conn));
-                SqlDatabaseManager.insertKeyRecord(conn, keyRecord);
-                itemRecord.setKeyCode(keyRecord.getCode());
-                itemRecord.setKeyFingerprint(KeySecurity.fingerprintKey(keyRecord.getCode()));
-                itemRecord.setStatus("generated");
-                itemRecord.setUpdatedAt(now);
-                SqlDatabaseManager.upsertWebStoreFulfillmentItem(conn, itemRecord);
+                if (itemRecord.getKeyCode() == null || itemRecord.getKeyCode().isBlank()) {
+                    KeyRecord keyRecord = generateKeyRecordForProduct(product, claim.minecraftUuid, now);
+                    keyRecord.setCode(generateUniqueKeyCode(conn));
+                    SqlDatabaseManager.insertKeyRecord(conn, keyRecord);
+                    itemRecord.setKeyCode(keyRecord.getCode());
+                    itemRecord.setKeyFingerprint(KeySecurity.fingerprintKey(keyRecord.getCode()));
+                    itemRecord.setStatus("generated");
+                    itemRecord.setUpdatedAt(now);
+                    SqlDatabaseManager.upsertWebStoreFulfillmentItem(conn, itemRecord);
+                } else {
+                    itemRecord.setStatus(itemRecord.getStatus() == null || itemRecord.getStatus().isBlank()
+                            ? "generated"
+                            : itemRecord.getStatus());
+                    itemRecord.setUpdatedAt(now);
+                    SqlDatabaseManager.upsertWebStoreFulfillmentItem(conn, itemRecord);
+                }
                 readyItems.add(itemRecord);
             }
 
+            ledger.getItems().clear();
+            ledger.getItems().addAll(cloneItems(readyItems));
             ledger.setStatus("awaiting_complete");
             ledger.setUpdatedAt(now);
             SqlDatabaseManager.upsertWebStoreFulfillment(conn, ledger);
@@ -452,15 +517,23 @@ public final class WebStoreFulfillmentService {
         FulfillmentRecord rec = new FulfillmentRecord();
         rec.setFulfillmentId(rs.getString("fulfillment_id"));
         rec.setOrderId(rs.getString("order_id"));
+        String originServerId = rs.getString("origin_server_id");
+        if (originServerId == null || originServerId.isBlank()) {
+            originServerId = rs.getString("server_id");
+        }
+        rec.setOriginServerId(originServerId);
         rec.setServerId(rs.getString("server_id"));
         rec.setMinecraftUuid(rs.getString("minecraft_uuid"));
         rec.setMinecraftUsername(rs.getString("minecraft_username"));
         rec.setPayloadDigest(rs.getString("payload_digest"));
         rec.setStatus(rs.getString("status"));
         rec.setRequestKeyId(rs.getString("request_key_id"));
+        rec.setClaimToken(rs.getString("claim_token"));
         rec.setCreatedAt(rs.getLong("created_at"));
         long claimedAt = rs.getLong("claimed_at");
         if (!rs.wasNull()) rec.setClaimedAt(claimedAt);
+        long leaseExpiresAt = rs.getLong("lease_expires_at");
+        if (!rs.wasNull()) rec.setLeaseExpiresAt(leaseExpiresAt);
         long completedAt = rs.getLong("completed_at");
         if (!rs.wasNull()) rec.setCompletedAt(completedAt);
         long failedAt = rs.getLong("failed_at");
@@ -598,7 +671,11 @@ public final class WebStoreFulfillmentService {
 
     private static String generateUniqueKeyCode(java.sql.Connection conn) throws java.sql.SQLException {
         for (int attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
-            String candidate = KeyService.generateRandomCode();
+            String candidate = br.com.pedrodalben.easyvip.util.UniqueCodeGenerator.generateCandidate(
+                    EasyVipConfig.common.keyCharset,
+                    EasyVipConfig.common.keyLength,
+                    EasyVipConfig.fulfillment.keyPrefix
+            );
             if (candidate == null || candidate.isBlank()) {
                 continue;
             }
@@ -624,6 +701,7 @@ public final class WebStoreFulfillmentService {
             String path = String.format(Locale.ROOT, COMPLETE_PATH_TEMPLATE, ledger.fulfillment.getFulfillmentId());
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("server_id", EasyVipConfig.fulfillment.serverId);
+            body.put("claim_token", ledger.fulfillment.getClaimToken());
             List<Map<String, Object>> items = new ArrayList<>();
             for (FulfillmentItemRecord item : ledger.items) {
                 Map<String, Object> map = new LinkedHashMap<>();
@@ -636,31 +714,71 @@ public final class WebStoreFulfillmentService {
             body.put("items", items);
 
             SignedResponse response = sendSignedJson("POST", path, GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
-            if (!response.success) {
-                return response.completeResponse;
+            if (!response.success()) {
+                return CompleteResponse.transientError("invalid_response_signature");
             }
-            return CompleteResponse.success();
+            ensureResponseServerId(response.bodyBytes());
+            if (response.statusCode() == 204 || response.statusCode() == 200) {
+                return CompleteResponse.success();
+            }
+            String errorCode = extractErrorCode(response.bodyBytes());
+            if (response.statusCode() == 409) {
+                if (isAlreadyCompleteError(errorCode)) {
+                    return CompleteResponse.success();
+                }
+                if (isLeaseExpiredError(errorCode)) {
+                    return CompleteResponse.transientError(errorCode);
+                }
+                return CompleteResponse.transientError(errorCode != null ? errorCode : "lease_conflict");
+            }
+            if (response.statusCode() == 408 || response.statusCode() == 429 || response.statusCode() >= 500) {
+                return CompleteResponse.transientError(errorCode != null ? errorCode : "http_" + response.statusCode());
+            }
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return CompleteResponse.success();
+            }
+            return CompleteResponse.definitiveError(errorCode != null ? errorCode : "http_" + response.statusCode());
+        } catch (IllegalArgumentException e) {
+            if ("server_mismatch".equals(e.getMessage())) {
+                return CompleteResponse.definitiveError("server_mismatch");
+            }
+            lastErrorCode = "complete_exception";
+            log("ERROR | " + serverLogPrefix() + "complete request failed: " + e.getMessage());
+            return null;
         } catch (Exception e) {
             lastErrorCode = "complete_exception";
-            log("ERROR | complete request failed: " + e.getMessage());
+            log("ERROR | " + serverLogPrefix() + "complete request failed: " + e.getMessage());
             return null;
         }
     }
 
-    private static void failFulfillment(String fulfillmentId, String errorCode, String errorMessage) {
+    private static void failFulfillment(String fulfillmentId, String claimToken, String errorCode, String errorMessage) {
         try {
             String path = String.format(Locale.ROOT, FAIL_PATH_TEMPLATE, fulfillmentId);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("server_id", EasyVipConfig.fulfillment.serverId);
+            body.put("claim_token", claimToken != null ? claimToken : "");
             body.put("error_code", errorCode);
             body.put("error_message", errorMessage != null ? errorMessage : "");
             SignedResponse response = sendSignedJson("POST", path, GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
-            if (response.success) {
-                log("FAIL_OK | fulfillment_id=" + fulfillmentId + " code=" + errorCode);
-                PersistenceManager.log("WebStore", "fulfillment_failed", "Fulfillment " + fulfillmentId + " failed: " + errorCode);
+            if (response.success()) {
+                ensureResponseServerId(response.bodyBytes());
+                String responseError = extractErrorCode(response.bodyBytes());
+                if (response.statusCode() == 409 && isLeaseExpiredError(responseError)) {
+                    log("FAIL_RETRY | " + serverLogPrefix() + "fulfillment_id=" + fulfillmentId + " code=" + errorCode);
+                } else {
+                    log("FAIL_OK | " + serverLogPrefix() + "fulfillment_id=" + fulfillmentId + " code=" + errorCode);
+                    PersistenceManager.log("WebStore", "fulfillment_failed", "Fulfillment " + fulfillmentId + " failed: " + errorCode);
+                }
             }
+        } catch (IllegalArgumentException e) {
+            if ("server_mismatch".equals(e.getMessage())) {
+                log("ERROR | " + serverLogPrefix() + "fail response rejected: server_mismatch");
+                return;
+            }
+            log("ERROR | " + serverLogPrefix() + "fail request failed: " + e.getMessage());
         } catch (Exception e) {
-            log("ERROR | fail request failed: " + e.getMessage());
+            log("ERROR | " + serverLogPrefix() + "fail request failed: " + e.getMessage());
         }
     }
 
@@ -670,13 +788,42 @@ public final class WebStoreFulfillmentService {
             body.put("server_id", EasyVipConfig.fulfillment.serverId);
             body.put("limit", EasyVipConfig.fulfillment.claimLimit);
             SignedResponse response = sendSignedJson("POST", CLAIM_PATH, GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
-            if (!response.success) {
+            if (!response.success()) {
+                lastErrorCode = "invalid_response_signature";
                 return null;
             }
-            return parseClaimResponse(response.bodyBytes);
+            if (response.statusCode() == 204) {
+                return new ClaimResponse();
+            }
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                String errorCode = extractErrorCode(response.bodyBytes());
+                if (response.statusCode() == 401 || response.statusCode() == 403) {
+                    lastErrorCode = errorCode != null ? errorCode : "auth_failed";
+                    log("ERROR | " + serverLogPrefix() + "claim auth failed code=" + lastErrorCode);
+                    return null;
+                }
+                if (response.statusCode() == 408 || response.statusCode() == 429 || response.statusCode() >= 500) {
+                    lastErrorCode = errorCode != null ? errorCode : "http_" + response.statusCode();
+                    return null;
+                }
+                lastErrorCode = errorCode != null ? errorCode : "http_" + response.statusCode();
+                log("ERROR | " + serverLogPrefix() + "claim rejected code=" + lastErrorCode);
+                return null;
+            }
+            ensureResponseServerId(response.bodyBytes());
+            return parseClaimResponse(response.bodyBytes());
+        } catch (IllegalArgumentException e) {
+            if ("server_mismatch".equals(e.getMessage())) {
+                lastErrorCode = "server_mismatch";
+                log("ERROR | " + serverLogPrefix() + "claim rejected: server_mismatch");
+                return null;
+            }
+            lastErrorCode = "claim_exception";
+            log("ERROR | " + serverLogPrefix() + "claim failed: " + e.getMessage());
+            return null;
         } catch (Exception e) {
             lastErrorCode = "claim_exception";
-            log("ERROR | claim failed: " + e.getMessage());
+            log("ERROR | " + serverLogPrefix() + "claim failed: " + e.getMessage());
             return null;
         }
     }
@@ -685,7 +832,7 @@ public final class WebStoreFulfillmentService {
         String secret = resolveSecret();
         String token = resolveToken();
         if (secret == null || secret.isBlank() || token == null || token.isBlank()) {
-            return SignedResponse.failure(new CompleteResponse(false, true, "config_missing"));
+            return SignedResponse.failure(-1, new byte[0]);
         }
 
         long timestamp = Instant.now().getEpochSecond();
@@ -713,22 +860,9 @@ public final class WebStoreFulfillmentService {
         HttpResponse<byte[]> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofByteArray());
         byte[] responseBody = response.body() != null ? response.body() : new byte[0];
         if (!validateResponseSignature(response, responseBody, nonce, secret)) {
-            return SignedResponse.failure(new CompleteResponse(false, false, "invalid_response_signature"), responseBody);
+            return SignedResponse.failure(response.statusCode(), responseBody);
         }
-        if (response.statusCode() == 204 || response.statusCode() == 409) {
-            return SignedResponse.success(responseBody);
-        }
-        if (response.statusCode() >= 500) {
-            return SignedResponse.failure(new CompleteResponse(false, true, "http_" + response.statusCode()), responseBody);
-        }
-        if (response.statusCode() == 429 || response.statusCode() == 408) {
-            return SignedResponse.failure(new CompleteResponse(false, true, "http_" + response.statusCode()), responseBody);
-        }
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            String errorCode = extractErrorCode(responseBody);
-            return SignedResponse.failure(new CompleteResponse(false, false, errorCode != null ? errorCode : "http_" + response.statusCode()), responseBody);
-        }
-        return SignedResponse.success(responseBody);
+        return SignedResponse.success(response.statusCode(), responseBody);
     }
 
     private static boolean validateResponseSignature(HttpResponse<byte[]> response, byte[] body, String nonce, String secret) {
@@ -762,6 +896,17 @@ public final class WebStoreFulfillmentService {
             throw new IllegalArgumentException("claim_response_not_object");
         }
         JsonObject root = parsed.getAsJsonObject();
+        validateExactKeys(root, "server_id", "fulfillments");
+        String rootServerId = null;
+        if (root.has("server_id")) {
+            rootServerId = getJsonString(root, "server_id");
+            if (rootServerId == null || rootServerId.isBlank()) {
+                throw new IllegalArgumentException("missing_server_id");
+            }
+            if (!EasyVipConfig.fulfillment.serverId.equals(rootServerId)) {
+                throw new IllegalArgumentException("server_mismatch");
+            }
+        }
         if (!root.has("fulfillments") || !root.get("fulfillments").isJsonArray()) {
             throw new IllegalArgumentException("missing_fulfillments");
         }
@@ -773,12 +918,28 @@ public final class WebStoreFulfillmentService {
                 throw new IllegalArgumentException("invalid_fulfillment");
             }
             JsonObject obj = element.getAsJsonObject();
-            validateExactKeys(obj, "fulfillment_id", "order_id", "minecraft_uuid", "minecraft_username", "items");
+            validateExactKeys(obj, "fulfillment_id", "order_id", "minecraft_uuid", "minecraft_username",
+                    "claim_token", "lease_expires_at", "origin_server_id", "server_id", "items");
             ClaimFulfillment fulfillment = new ClaimFulfillment();
             fulfillment.fulfillmentId = getJsonString(obj, "fulfillment_id");
             fulfillment.orderId = getJsonString(obj, "order_id");
             fulfillment.minecraftUuid = getJsonString(obj, "minecraft_uuid");
             fulfillment.minecraftUsername = getJsonString(obj, "minecraft_username");
+            fulfillment.claimToken = getJsonString(obj, "claim_token");
+            fulfillment.leaseExpiresAt = parseLeaseExpiresAt(getJsonValue(obj, "lease_expires_at"));
+            fulfillment.originServerId = firstNonBlank(getJsonString(obj, "origin_server_id"), getJsonString(obj, "server_id"), rootServerId);
+            if (fulfillment.originServerId == null || fulfillment.originServerId.isBlank()) {
+                throw new IllegalArgumentException("missing_server_id");
+            }
+            if (!EasyVipConfig.fulfillment.serverId.equals(fulfillment.originServerId)) {
+                throw new IllegalArgumentException("server_mismatch");
+            }
+            if (fulfillment.claimToken == null || fulfillment.claimToken.isBlank()) {
+                throw new IllegalArgumentException("missing_claim_token");
+            }
+            if (fulfillment.leaseExpiresAt == null) {
+                throw new IllegalArgumentException("missing_lease_expires_at");
+            }
             JsonArray items = obj.getAsJsonArray("items");
             if (items == null || items.isEmpty()) {
                 throw new IllegalArgumentException("empty_items");
@@ -841,12 +1002,20 @@ public final class WebStoreFulfillmentService {
         }
     }
 
+    private static JsonElement getJsonValue(JsonObject obj, String key) {
+        return obj.has(key) ? obj.get(key) : null;
+    }
+
     private static String extractErrorCode(byte[] bodyBytes) {
         try {
             String raw = new String(bodyBytes, StandardCharsets.UTF_8);
             JsonElement parsed = JsonParser.parseString(raw);
             if (parsed.isJsonObject()) {
                 JsonObject obj = parsed.getAsJsonObject();
+                JsonElement errorCode = obj.get("error_code");
+                if (errorCode != null && errorCode.isJsonPrimitive()) {
+                    return errorCode.getAsString();
+                }
                 JsonElement error = obj.get("error");
                 if (error != null && error.isJsonPrimitive()) {
                     return error.getAsString();
@@ -857,18 +1026,106 @@ public final class WebStoreFulfillmentService {
         return null;
     }
 
+    private static boolean isLeaseExpiredError(String errorCode) {
+        if (errorCode == null) {
+            return false;
+        }
+        String normalized = errorCode.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("lease_expired")
+                || normalized.equals("lease_expired_conflict")
+                || normalized.equals("lease_conflict");
+    }
+
+    private static boolean isAlreadyCompleteError(String errorCode) {
+        if (errorCode == null) {
+            return false;
+        }
+        String normalized = errorCode.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("already_completed")
+                || normalized.equals("already_complete")
+                || normalized.equals("duplicate_complete");
+    }
+
+    private static void ensureResponseServerId(byte[] bodyBytes) {
+        try {
+            String raw = new String(bodyBytes, StandardCharsets.UTF_8);
+            JsonElement parsed = JsonParser.parseString(raw);
+            if (!parsed.isJsonObject()) {
+                return;
+            }
+            JsonObject obj = parsed.getAsJsonObject();
+            if (!obj.has("server_id")) {
+                return;
+            }
+            String serverId = getJsonString(obj, "server_id");
+            if (!serverId.isBlank() && !EasyVipConfig.fulfillment.serverId.equals(serverId)) {
+                throw new IllegalArgumentException("server_mismatch");
+            }
+        } catch (Exception e) {
+            if (e instanceof IllegalArgumentException && "server_mismatch".equals(e.getMessage())) {
+                throw (IllegalArgumentException) e;
+            }
+        }
+    }
+
+    private static Long parseLeaseExpiresAt(JsonElement value) {
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        try {
+            if (value.isJsonPrimitive()) {
+                var primitive = value.getAsJsonPrimitive();
+                if (primitive.isNumber()) {
+                    long numeric = primitive.getAsLong();
+                    if (numeric < 1_000_000_000_000L) {
+                        numeric *= 1000L;
+                    }
+                    return numeric;
+                }
+                if (primitive.isString()) {
+                    String raw = primitive.getAsString().trim();
+                    if (raw.isEmpty()) {
+                        return null;
+                    }
+                    if (raw.chars().allMatch(Character::isDigit)) {
+                        long numeric = Long.parseLong(raw);
+                        if (numeric < 1_000_000_000_000L) {
+                            numeric *= 1000L;
+                        }
+                        return numeric;
+                    }
+                    return Instant.parse(raw).toEpochMilli();
+                }
+            }
+        } catch (DateTimeParseException | NumberFormatException ignored) {
+        }
+        return null;
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
     private static FulfillmentRecord cloneRecord(FulfillmentRecord source) {
         FulfillmentRecord record = new FulfillmentRecord();
         record.setFulfillmentId(source.getFulfillmentId());
         record.setOrderId(source.getOrderId());
+        record.setOriginServerId(source.getOriginServerId());
         record.setServerId(source.getServerId());
         record.setMinecraftUuid(source.getMinecraftUuid());
         record.setMinecraftUsername(source.getMinecraftUsername());
         record.setPayloadDigest(source.getPayloadDigest());
         record.setStatus(source.getStatus());
         record.setRequestKeyId(source.getRequestKeyId());
+        record.setClaimToken(source.getClaimToken());
         record.setCreatedAt(source.getCreatedAt());
         record.setClaimedAt(source.getClaimedAt());
+        record.setLeaseExpiresAt(source.getLeaseExpiresAt());
         record.setCompletedAt(source.getCompletedAt());
         record.setFailedAt(source.getFailedAt());
         record.setFailureCode(source.getFailureCode());
@@ -969,6 +1226,10 @@ public final class WebStoreFulfillmentService {
         }
     }
 
+    private static String serverLogPrefix() {
+        return "server_id=" + EasyVipConfig.fulfillment.serverId + " ";
+    }
+
     private static String hmacSha256(String secret, String data) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
@@ -989,17 +1250,13 @@ public final class WebStoreFulfillmentService {
         }
     }
 
-    private record SignedResponse(boolean success, byte[] bodyBytes, CompleteResponse completeResponse) {
-        static SignedResponse success(byte[] bodyBytes) {
-            return new SignedResponse(true, bodyBytes, CompleteResponse.success());
+    private record SignedResponse(boolean success, int statusCode, byte[] bodyBytes) {
+        static SignedResponse success(int statusCode, byte[] bodyBytes) {
+            return new SignedResponse(true, statusCode, bodyBytes != null ? bodyBytes : new byte[0]);
         }
 
-        static SignedResponse failure(CompleteResponse response) {
-            return new SignedResponse(false, new byte[0], response);
-        }
-
-        static SignedResponse failure(CompleteResponse response, byte[] bodyBytes) {
-            return new SignedResponse(false, bodyBytes, response);
+        static SignedResponse failure(int statusCode, byte[] bodyBytes) {
+            return new SignedResponse(false, statusCode, bodyBytes != null ? bodyBytes : new byte[0]);
         }
     }
 
@@ -1017,6 +1274,14 @@ public final class WebStoreFulfillmentService {
         static CompleteResponse success() {
             return new CompleteResponse(true, false, null);
         }
+
+        static CompleteResponse transientError(String errorCode) {
+            return new CompleteResponse(false, true, errorCode);
+        }
+
+        static CompleteResponse definitiveError(String errorCode) {
+            return new CompleteResponse(false, false, errorCode);
+        }
     }
 
     private static final class ClaimResponse {
@@ -1028,13 +1293,20 @@ public final class WebStoreFulfillmentService {
         String orderId;
         String minecraftUuid;
         String minecraftUsername;
+        String claimToken;
+        Long leaseExpiresAt;
+        String originServerId;
         final List<ClaimItem> items = new ArrayList<>();
+
+        String resolveServerId() {
+            return originServerId != null && !originServerId.isBlank() ? originServerId : EasyVipConfig.fulfillment.serverId;
+        }
 
         String payloadDigest() {
             StringBuilder sb = new StringBuilder();
             sb.append(fulfillmentId).append('\n')
                     .append(orderId).append('\n')
-                    .append(EasyVipConfig.fulfillment.serverId).append('\n')
+                    .append(resolveServerId()).append('\n')
                     .append(minecraftUuid).append('\n')
                     .append(minecraftUsername).append('\n');
             for (ClaimItem item : items) {

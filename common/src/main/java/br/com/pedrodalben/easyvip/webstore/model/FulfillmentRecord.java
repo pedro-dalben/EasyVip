@@ -7,14 +7,16 @@ public class FulfillmentRecord {
 
     private String fulfillmentId;
     private String orderId;
-    private String serverId;
+    private String originServerId;
     private String minecraftUuid;
     private String minecraftUsername;
     private String payloadDigest;
     private String status;
     private String requestKeyId;
+    private String claimToken;
     private long createdAt;
     private Long claimedAt;
+    private Long leaseExpiresAt;
     private Long completedAt;
     private Long failedAt;
     private String failureCode;
@@ -29,8 +31,18 @@ public class FulfillmentRecord {
     public String getOrderId() { return orderId; }
     public void setOrderId(String v) { this.orderId = v; }
 
-    public String getServerId() { return serverId; }
-    public void setServerId(String v) { this.serverId = v; }
+    public String getOriginServerId() { return originServerId; }
+    public void setOriginServerId(String v) { this.originServerId = v; }
+
+    /**
+     * Legacy alias retained for older call sites.
+     */
+    public String getServerId() { return originServerId; }
+
+    /**
+     * Legacy alias retained for older call sites.
+     */
+    public void setServerId(String v) { this.originServerId = v; }
 
     public String getMinecraftUuid() { return minecraftUuid; }
     public void setMinecraftUuid(String v) { this.minecraftUuid = v; }
@@ -47,11 +59,17 @@ public class FulfillmentRecord {
     public String getRequestKeyId() { return requestKeyId; }
     public void setRequestKeyId(String v) { this.requestKeyId = v; }
 
+    public String getClaimToken() { return claimToken; }
+    public void setClaimToken(String v) { this.claimToken = v; }
+
     public long getCreatedAt() { return createdAt; }
     public void setCreatedAt(long v) { this.createdAt = v; }
 
     public Long getClaimedAt() { return claimedAt; }
     public void setClaimedAt(Long v) { this.claimedAt = v; }
+
+    public Long getLeaseExpiresAt() { return leaseExpiresAt; }
+    public void setLeaseExpiresAt(Long v) { this.leaseExpiresAt = v; }
 
     public Long getCompletedAt() { return completedAt; }
     public void setCompletedAt(Long v) { this.completedAt = v; }

@@ -5,6 +5,7 @@ public final class WebStoreConfig {
     public boolean enabled = false;
     public String apiUrl = "http://localhost:3000";
     public String apiToken = "";
+    public String serverId = "";
     public boolean syncOnRegister = true;
     public boolean syncOnLogin = true;
     public boolean syncOnJoin = true;
