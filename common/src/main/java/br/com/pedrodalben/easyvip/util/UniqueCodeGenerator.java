@@ -21,9 +21,18 @@ public final class UniqueCodeGenerator {
     }
 
     public static String generateCandidate(String charset, int length, String prefix) {
+        if (charset == null || charset.isEmpty()) {
+            throw new IllegalArgumentException("charset must not be null or empty");
+        }
+        long distinct = charset.chars().distinct().count();
+        if (distinct < 2) {
+            throw new IllegalArgumentException("charset must contain at least 2 distinct characters, got: " + distinct);
+        }
+        if (length < 1) {
+            throw new IllegalArgumentException("length must be at least 1, got: " + length);
+        }
         StringBuilder sb = new StringBuilder(prefix != null ? prefix : "");
-        int effectiveLength = Math.max(0, length);
-        for (int i = 0; i < effectiveLength; i++) {
+        for (int i = 0; i < length; i++) {
             sb.append(charset.charAt(RANDOM.nextInt(charset.length())));
         }
         return sb.toString();

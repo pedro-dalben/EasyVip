@@ -1072,6 +1072,27 @@ public final class EasyVipConfig {
                     "common.toml: key_length deve ser no mínimo 4."
             ));
         }
+        if (common.keyCharset == null || common.keyCharset.length() < 2) {
+            errors.add(localized(
+                    "common.toml: key_charset must have at least 2 characters.",
+                    "common.toml: key_charset deve ter pelo menos 2 caracteres."
+            ));
+        } else {
+            long uniqueChars = common.keyCharset.chars().distinct().count();
+            if (uniqueChars < 2) {
+                errors.add(localized(
+                        "common.toml: key_charset must contain at least 2 distinct characters.",
+                        "common.toml: key_charset deve conter pelo menos 2 caracteres distintos."
+                ));
+            }
+            double entropyBits = Math.log(Math.pow(uniqueChars, common.keyLength)) / Math.log(2);
+            if (entropyBits < 32) {
+                errors.add(localized(
+                        "common.toml: key_charset + key_length combination provides less than 32 bits of entropy (" + String.format("%.1f", entropyBits) + " bits). Increase charset size or key_length.",
+                        "common.toml: combinação key_charset + key_length fornece menos de 32 bits de entropia (" + String.format("%.1f", entropyBits) + " bits). Aumente o charset ou key_length."
+                ));
+            }
+        }
         if (!common.defaultActivationMode.equals("extend") && !common.defaultActivationMode.equals("replace") &&
             !common.defaultActivationMode.equals("stack") && !common.defaultActivationMode.equals("deny")) {
             errors.add(localized(
