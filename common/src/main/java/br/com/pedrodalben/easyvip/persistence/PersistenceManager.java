@@ -254,7 +254,9 @@ public final class PersistenceManager {
         LOCK.readLock().lock();
         Map<String, KeyRecord> data = new HashMap<>();
         try {
-            data.putAll(keys);
+            for (Map.Entry<String, KeyRecord> entry : keys.entrySet()) {
+                data.put(entry.getKey(), entry.getValue().copy());
+            }
         } finally {
             LOCK.readLock().unlock();
         }

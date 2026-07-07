@@ -277,27 +277,53 @@ public final class SqlDatabaseManager {
     public static KeyRecord putKeyIfAbsent(KeyRecord record) {
         LOCK.writeLock().lock();
         try (Connection conn = getConnection()) {
-            KeyRecord existing = getKey(conn, record.getCode());
-            if (existing != null) {
-                return existing;
+            conn.setAutoCommit(false);
+            try {
+                KeyRecord existing = getKey(conn, record.getCode());
+                if (existing != null) {
+                    conn.commit();
+                    return existing;
+                }
+                try (PreparedStatement ps = conn.prepareStatement("""
+                    INSERT INTO easyvip_keys
+                    (code, type, tier_id, duration, reward_key_id, max_uses, used_count,
+                     bound_player_uuid, created_time, expiry_time, used_by_json,
+                     last_used_at_by_json, actions_json, consumed_instances_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """)) {
+                    setKeyStatement(ps, record);
+                    ps.executeUpdate();
+                }
+                conn.commit();
+                return null;
+            } catch (SQLException e) {
+                try {
+                    conn.rollback();
+                } catch (SQLException ignored) {
+                }
+                if (isDuplicateKeyError(e)) {
+                    KeyRecord existing = getKey(conn, record.getCode());
+                    return existing != null ? existing : record;
+                }
+                System.err.println("[EasyVip-SQL] Error inserting key " + br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(record.getCode()) + ": " + e.getMessage());
+                return record;
+            } finally {
+                try {
+                    conn.setAutoCommit(true);
+                } catch (SQLException ignored) {
+                }
             }
-            try (PreparedStatement ps = conn.prepareStatement("""
-                INSERT INTO easyvip_keys
-                (code, type, tier_id, duration, reward_key_id, max_uses, used_count,
-                 bound_player_uuid, created_time, expiry_time, used_by_json,
-                 last_used_at_by_json, actions_json, consumed_instances_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """)) {
-                setKeyStatement(ps, record);
-                ps.executeUpdate();
-            }
-            return null;
         } catch (SQLException e) {
-            System.err.println("[EasyVip-SQL] Error inserting key " + br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(record.getCode()) + ": " + e.getMessage());
+            System.err.println("[EasyVip-SQL] Error getting connection for key insert: " + e.getMessage());
             return record;
         } finally {
             LOCK.writeLock().unlock();
         }
+    }
+
+    private static boolean isDuplicateKeyError(SQLException e) {
+        String sqlState = e.getSQLState();
+        return "23000".equals(sqlState) || "23505".equals(sqlState);
     }
 
     private static void setKeyStatement(PreparedStatement ps, KeyRecord record) throws SQLException {
