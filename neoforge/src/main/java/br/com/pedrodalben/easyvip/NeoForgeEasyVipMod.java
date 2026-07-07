@@ -10,6 +10,7 @@ import br.com.pedrodalben.easyvip.service.KeyService;
 import br.com.pedrodalben.easyvip.service.PackageService;
 import br.com.pedrodalben.easyvip.service.VipService;
 import br.com.pedrodalben.easyvip.webstore.WebStoreSyncService;
+import br.com.pedrodalben.easyvip.webstore.FulfillmentApiServer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -57,6 +58,7 @@ public final class NeoForgeEasyVipMod {
             PersistenceManager.initialize(configDir);
             WebStoreSyncService.init(configDir);
             ExpirationService.start(server);
+            FulfillmentApiServer.start();
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize EasyVip configuration", e);
         }
@@ -64,6 +66,7 @@ public final class NeoForgeEasyVipMod {
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+        FulfillmentApiServer.stop();
         ExpirationService.stop();
         PersistenceManager.shutdown();
     }
