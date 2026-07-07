@@ -10,6 +10,7 @@ public class FulfillmentItemRecord {
     private String keyFingerprint;
     private String status;
     private long createdAt;
+    private long updatedAt;
 
     public String getLineItemId() { return lineItemId; }
     public void setLineItemId(String v) { this.lineItemId = v; }
@@ -34,4 +35,7 @@ public class FulfillmentItemRecord {
 
     public long getCreatedAt() { return createdAt; }
     public void setCreatedAt(long v) { this.createdAt = v; }
+
+    public long getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(long v) { this.updatedAt = v; }
 }

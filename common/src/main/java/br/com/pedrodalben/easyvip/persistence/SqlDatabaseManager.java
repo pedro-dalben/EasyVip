@@ -37,8 +37,36 @@ public final class SqlDatabaseManager {
         return initialized;
     }
 
+    public static boolean isHealthy() {
+        if (!initialized) {
+            return false;
+        }
+        try (Connection conn = getConnection()) {
+            return conn != null && conn.isValid(2);
+        } catch (SQLException e) {
+            System.err.println("[EasyVip-SQL] Health check failed: " + e.getMessage());
+            return false;
+        }
+    }
+
     public static void shutdown() {
         initialized = false;
+    }
+
+    @FunctionalInterface
+    public interface SqlWork<T> {
+        T apply(Connection conn) throws SQLException;
+    }
+
+    public static <T> T withConnection(SqlWork<T> work) {
+        LOCK.writeLock().lock();
+        try (Connection conn = getConnection()) {
+            return work.apply(conn);
+        } catch (SQLException e) {
+            throw new RuntimeException("SQL operation failed: " + e.getMessage(), e);
+        } finally {
+            LOCK.writeLock().unlock();
+        }
     }
 
     private static Connection getConnection() throws SQLException {
@@ -82,8 +110,53 @@ public final class SqlDatabaseManager {
                 )
             """);
 
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS webstore_fulfillments (
+                    fulfillment_id VARCHAR(36) PRIMARY KEY,
+                    order_id VARCHAR(255) NOT NULL,
+                    server_id VARCHAR(255) NOT NULL,
+                    minecraft_uuid VARCHAR(36) NOT NULL,
+                    minecraft_username VARCHAR(255) NOT NULL DEFAULT '',
+                    payload_digest VARCHAR(128) NOT NULL,
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    request_key_id VARCHAR(255) DEFAULT NULL,
+                    created_at BIGINT NOT NULL DEFAULT 0,
+                    claimed_at BIGINT DEFAULT NULL,
+                    completed_at BIGINT DEFAULT NULL,
+                    failed_at BIGINT DEFAULT NULL,
+                    failure_code VARCHAR(80) DEFAULT NULL,
+                    error_message VARCHAR(255) DEFAULT NULL,
+                    updated_at BIGINT NOT NULL DEFAULT 0
+                )
+            """);
+
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS webstore_fulfillment_items (
+                    line_item_id VARCHAR(36) PRIMARY KEY,
+                    fulfillment_id VARCHAR(36) NOT NULL,
+                    product_sku VARCHAR(255) NOT NULL,
+                    quantity INT NOT NULL DEFAULT 1,
+                    key_code VARCHAR(255) DEFAULT NULL,
+                    key_fingerprint VARCHAR(255) DEFAULT NULL,
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    created_at BIGINT NOT NULL DEFAULT 0,
+                    updated_at BIGINT NOT NULL DEFAULT 0
+                )
+            """);
+
             // Schema migrations for existing databases
             ensureColumnExists(conn, "easyvip_keys", "consumed_instances_json", "MEDIUMTEXT");
+            ensureColumnExists(conn, "webstore_fulfillments", "server_id", "VARCHAR(255) NOT NULL DEFAULT ''");
+            ensureColumnExists(conn, "webstore_fulfillments", "claimed_at", "BIGINT DEFAULT NULL");
+            ensureColumnExists(conn, "webstore_fulfillments", "completed_at", "BIGINT DEFAULT NULL");
+            ensureColumnExists(conn, "webstore_fulfillments", "failed_at", "BIGINT DEFAULT NULL");
+            ensureColumnExists(conn, "webstore_fulfillments", "failure_code", "VARCHAR(80) DEFAULT NULL");
+            ensureColumnExists(conn, "webstore_fulfillments", "error_message", "VARCHAR(255) DEFAULT NULL");
+            ensureColumnExists(conn, "webstore_fulfillments", "updated_at", "BIGINT NOT NULL DEFAULT 0");
+            ensureColumnExists(conn, "webstore_fulfillment_items", "updated_at", "BIGINT NOT NULL DEFAULT 0");
+            ensureUniqueIndex(conn, "webstore_fulfillments", "ux_webstore_fulfillments_fulfillment_id", "fulfillment_id");
+            ensureUniqueIndex(conn, "webstore_fulfillment_items", "ux_webstore_fulfillment_items_line_item_id", "line_item_id");
+            ensureUniqueIndex(conn, "webstore_fulfillment_items", "ux_webstore_fulfillment_items_key_code", "key_code");
 
             stmt.execute("""
                 CREATE TABLE IF NOT EXISTS easyvip_pending_variants (
@@ -139,12 +212,28 @@ public final class SqlDatabaseManager {
                     key_code VARCHAR(255),
                     key_fingerprint VARCHAR(255),
                     status VARCHAR(50) NOT NULL DEFAULT 'pending',
-                    created_at BIGINT NOT NULL DEFAULT 0,
-                    INDEX idx_fulfillment_items_fulfillment (fulfillment_id)
+                    created_at BIGINT NOT NULL DEFAULT 0
                 )
             """);
         } catch (SQLException e) {
             throw new RuntimeException("Failed to create database tables", e);
+        }
+    }
+
+    private static void ensureUniqueIndex(Connection conn, String table, String indexName, String column) {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, indexName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && rs.getInt(1) == 0) {
+                    try (Statement alter = conn.createStatement()) {
+                        alter.execute("ALTER TABLE " + table + " ADD UNIQUE KEY " + indexName + " (" + column + ")");
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[EasyVip-SQL] Failed to ensure unique index " + table + "." + indexName + ": " + e.getMessage());
         }
     }
 
@@ -766,5 +855,171 @@ public final class SqlDatabaseManager {
         if (!rs.wasNull()) rec.setFailedAt(failedAt);
         rec.setFailureCode(rs.getString("failure_code"));
         return rec;
+    }
+
+    public static FulfillmentRecord getWebStoreFulfillment(String fulfillmentId) {
+        LOCK.readLock().lock();
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT * FROM webstore_fulfillments WHERE fulfillment_id = ?")) {
+            ps.setString(1, fulfillmentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    FulfillmentRecord rec = mapWebStoreFulfillment(rs);
+                    rec.getItems().addAll(getWebStoreFulfillmentItems(conn, fulfillmentId));
+                    return rec;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[EasyVip-SQL] Error reading webstore fulfillment " + fulfillmentId + ": " + e.getMessage());
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        return null;
+    }
+
+    public static boolean upsertWebStoreFulfillment(Connection conn, FulfillmentRecord fulfillment) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO webstore_fulfillments (
+                    fulfillment_id, order_id, server_id, minecraft_uuid, minecraft_username,
+                    payload_digest, status, request_key_id, created_at, claimed_at,
+                    completed_at, failed_at, failure_code, error_message, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    order_id = VALUES(order_id),
+                    server_id = VALUES(server_id),
+                    minecraft_uuid = VALUES(minecraft_uuid),
+                    minecraft_username = VALUES(minecraft_username),
+                    payload_digest = VALUES(payload_digest),
+                    status = VALUES(status),
+                    request_key_id = VALUES(request_key_id),
+                    claimed_at = VALUES(claimed_at),
+                    completed_at = VALUES(completed_at),
+                    failed_at = VALUES(failed_at),
+                    failure_code = VALUES(failure_code),
+                    error_message = VALUES(error_message),
+                    updated_at = VALUES(updated_at)
+                """)) {
+            ps.setString(1, fulfillment.getFulfillmentId());
+            ps.setString(2, fulfillment.getOrderId());
+            ps.setString(3, fulfillment.getServerId());
+            ps.setString(4, fulfillment.getMinecraftUuid());
+            ps.setString(5, fulfillment.getMinecraftUsername());
+            ps.setString(6, fulfillment.getPayloadDigest());
+            ps.setString(7, fulfillment.getStatus());
+            ps.setString(8, fulfillment.getRequestKeyId());
+            ps.setLong(9, fulfillment.getCreatedAt());
+            if (fulfillment.getClaimedAt() != null) {
+                ps.setLong(10, fulfillment.getClaimedAt());
+            } else {
+                ps.setNull(10, Types.BIGINT);
+            }
+            if (fulfillment.getCompletedAt() != null) {
+                ps.setLong(11, fulfillment.getCompletedAt());
+            } else {
+                ps.setNull(11, Types.BIGINT);
+            }
+            if (fulfillment.getFailedAt() != null) {
+                ps.setLong(12, fulfillment.getFailedAt());
+            } else {
+                ps.setNull(12, Types.BIGINT);
+            }
+            ps.setString(13, fulfillment.getFailureCode());
+            ps.setString(14, fulfillment.getErrorMessage());
+            ps.setLong(15, fulfillment.getUpdatedAt());
+            ps.executeUpdate();
+            return true;
+        }
+    }
+
+    public static boolean upsertWebStoreFulfillmentItem(Connection conn, FulfillmentItemRecord item) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO webstore_fulfillment_items (
+                    line_item_id, fulfillment_id, product_sku, quantity, key_code,
+                    key_fingerprint, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    fulfillment_id = VALUES(fulfillment_id),
+                    product_sku = VALUES(product_sku),
+                    quantity = VALUES(quantity),
+                    key_code = VALUES(key_code),
+                    key_fingerprint = VALUES(key_fingerprint),
+                    status = VALUES(status),
+                    created_at = VALUES(created_at),
+                    updated_at = VALUES(updated_at)
+                """)) {
+            ps.setString(1, item.getLineItemId());
+            ps.setString(2, item.getFulfillmentId());
+            ps.setString(3, item.getProductSku());
+            ps.setInt(4, item.getQuantity());
+            ps.setString(5, item.getKeyCode());
+            ps.setString(6, item.getKeyFingerprint());
+            ps.setString(7, item.getStatus());
+            ps.setLong(8, item.getCreatedAt());
+            ps.setLong(9, item.getUpdatedAt());
+            ps.executeUpdate();
+            return true;
+        }
+    }
+
+    public static boolean insertKeyRecord(Connection conn, KeyRecord record) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                 INSERT INTO easyvip_keys
+                 (code, type, tier_id, duration, reward_key_id, max_uses, used_count,
+                  bound_player_uuid, created_time, expiry_time, used_by_json,
+                  last_used_at_by_json, actions_json, consumed_instances_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 """)) {
+            setKeyStatement(ps, record);
+            ps.executeUpdate();
+            return true;
+        }
+    }
+
+    private static FulfillmentRecord mapWebStoreFulfillment(ResultSet rs) throws SQLException {
+        FulfillmentRecord rec = new FulfillmentRecord();
+        rec.setFulfillmentId(rs.getString("fulfillment_id"));
+        rec.setOrderId(rs.getString("order_id"));
+        rec.setServerId(rs.getString("server_id"));
+        rec.setMinecraftUuid(rs.getString("minecraft_uuid"));
+        rec.setMinecraftUsername(rs.getString("minecraft_username"));
+        rec.setPayloadDigest(rs.getString("payload_digest"));
+        rec.setStatus(rs.getString("status"));
+        rec.setRequestKeyId(rs.getString("request_key_id"));
+        rec.setCreatedAt(rs.getLong("created_at"));
+        long claimedAt = rs.getLong("claimed_at");
+        if (!rs.wasNull()) rec.setClaimedAt(claimedAt);
+        long completedAt = rs.getLong("completed_at");
+        if (!rs.wasNull()) rec.setCompletedAt(completedAt);
+        long failedAt = rs.getLong("failed_at");
+        if (!rs.wasNull()) rec.setFailedAt(failedAt);
+        rec.setFailureCode(rs.getString("failure_code"));
+        rec.setErrorMessage(rs.getString("error_message"));
+        rec.setUpdatedAt(rs.getLong("updated_at"));
+        return rec;
+    }
+
+    private static List<FulfillmentItemRecord> getWebStoreFulfillmentItems(Connection conn, String fulfillmentId) throws SQLException {
+        List<FulfillmentItemRecord> result = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT * FROM webstore_fulfillment_items WHERE fulfillment_id = ?")) {
+            ps.setString(1, fulfillmentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    FulfillmentItemRecord item = new FulfillmentItemRecord();
+                    item.setLineItemId(rs.getString("line_item_id"));
+                    item.setFulfillmentId(rs.getString("fulfillment_id"));
+                    item.setProductSku(rs.getString("product_sku"));
+                    item.setQuantity(rs.getInt("quantity"));
+                    item.setKeyCode(rs.getString("key_code"));
+                    item.setKeyFingerprint(rs.getString("key_fingerprint"));
+                    item.setStatus(rs.getString("status"));
+                    item.setCreatedAt(rs.getLong("created_at"));
+                    item.setUpdatedAt(rs.getLong("updated_at"));
+                    result.add(item);
+                }
+            }
+        }
+        return result;
     }
 }

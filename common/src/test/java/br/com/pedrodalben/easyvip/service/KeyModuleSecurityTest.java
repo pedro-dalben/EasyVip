@@ -414,7 +414,7 @@ class KeyModuleSecurityTest {
     void fingerprintKeyProducesHexString() {
         String fp = KeySecurity.fingerprintKey("EVIP-TEST123");
         assertNotNull(fp);
-        assertTrue(fp.matches("[0-9a-f]{12}"));
+        assertTrue(fp.matches("sha256:[0-9a-f]{16}"));
     }
 
     @Test
@@ -442,6 +442,14 @@ class KeyModuleSecurityTest {
         String input = "Player Pedro redeemed reward successfully";
         String sanitized = KeySecurity.sanitizeAuditDetails(input);
         assertEquals(input, sanitized);
+    }
+
+    @Test
+    void auditLogSanitizesRawKeyMaterial() {
+        PersistenceManager.log("Console", "test", "activation_key=EVIP-SECRET1234 code=EVIP-SECRET1234");
+        String details = PersistenceManager.getAuditLogs().get(PersistenceManager.getAuditLogs().size() - 1).getDetails();
+        assertFalse(details.contains("SECRET1234"));
+        assertTrue(details.contains("***MASKED***"));
     }
 
     // ─── 11. Command Allowlist ───────────────────────────────

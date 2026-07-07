@@ -7,6 +7,7 @@ import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
 import br.com.pedrodalben.easyvip.platform.PermissionBridge;
 import br.com.pedrodalben.easyvip.service.*;
 import br.com.pedrodalben.easyvip.webstore.WebStoreSyncService;
+import br.com.pedrodalben.easyvip.webstore.WebStoreFulfillmentService;
 import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -277,6 +278,10 @@ public final class EasyVipCommands {
                 .then(Commands.argument("page", IntegerArgumentType.integer(1))
                         .executes(ctx -> executeAudit(ctx, IntegerArgumentType.getInteger(ctx, "page")))));
 
+        admin.then(Commands.literal("webstore")
+                .then(Commands.literal("status")
+                        .executes(EasyVipCommands::executeWebStoreStatus)));
+
         root.then(admin);
 
         // ─── Config Subcommands ─────────────────────────────────
@@ -342,6 +347,7 @@ public final class EasyVipCommands {
 
         if (hasPermission(src, "easyvip.admin")) {
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin ... §8- §7" + EasyVipConfig.localized("administrative commands", "comandos administrativos")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin webstore status §8- §7" + EasyVipConfig.localized("fulfillment state", "estado do fulfillment")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip createvip <id> <display_name> [color] §8- §7" + EasyVipConfig.localized("create a new VIP definition", "criar uma nova definição de VIP")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip key ... §8- §7" + EasyVipConfig.localized("manage keys", "gerenciar chaves")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip package ... §8- §7" + EasyVipConfig.localized("manage packages", "gerenciar pacotes")), false);
@@ -1176,17 +1182,17 @@ public final class EasyVipCommands {
         }
         KeyRecord finalKey = key;
 
+        String displayCode = br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(finalKey.getCode());
         if (reveal) {
             String opName = operatorName(src);
             PersistenceManager.log(opName, "key_info_reveal",
-                    "Full key code revealed for " + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(finalKey.getCode()));
+                    "Key info requested for " + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(finalKey.getCode()));
         }
 
-        src.sendSuccess(() -> {
-            String displayCode = reveal ? finalKey.getCode() : br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(finalKey.getCode());
-            return Component.literal("§7[§eEasyVip§7] §a" + displayCode + " §8| §f" + finalKey.getType()
-                    + " §8| §f" + EasyVipConfig.localized("used", "usado") + " " + finalKey.getUsedCount() + "/" + finalKey.getMaxUses());
-        }, false);
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + displayCode
+                + " §8| §7" + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(finalKey.getCode())
+                + " §8| §f" + finalKey.getType()
+                + " §8| §f" + EasyVipConfig.localized("used", "usado") + " " + finalKey.getUsedCount() + "/" + finalKey.getMaxUses()), false);
         return 1;
     }
 
@@ -1272,6 +1278,13 @@ public final class EasyVipCommands {
         return 1;
     }
 
+    private static int executeWebStoreStatus(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String status = WebStoreFulfillmentService.statusSummary();
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §e" + EasyVipConfig.localized("WebStore fulfillment status:", "Status do fulfillment da WebStore:") + " §f" + status), false);
+        return 1;
+    }
+
     private static String operatorName(CommandSourceStack src) {
         if (src.getEntity() instanceof ServerPlayer op) {
             return op.getGameProfile().getName();
@@ -1352,6 +1365,8 @@ public final class EasyVipCommands {
             var server = src.getServer();
             if (server != null) {
                 ExpirationService.reload(server);
+                java.nio.file.Path configDir = server.getServerDirectory().resolve("config").resolve("easyvip");
+                WebStoreFulfillmentService.reload(configDir);
             }
             src.sendSuccess(() -> Component.literal(
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.reloadSuccess, new HashMap<>())

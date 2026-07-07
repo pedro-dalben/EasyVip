@@ -70,6 +70,30 @@ public final class KeyService {
     }
 
     public static KeyRecord generateVipKey(String tierId, String durationStr, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+        KeyRecord record = createVipKeyRecord(tierId, durationStr, maxUses, boundPlayer, expiryTime, actions);
+        insertUnique(record);
+        PersistenceManager.log("System", "generate_vip_key", "Generated VIP key "
+                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " for tier " + tierId);
+        return record;
+    }
+
+    public static KeyRecord generateRewardKey(String rewardKeyId, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+        KeyRecord record = createRewardKeyRecord(rewardKeyId, maxUses, boundPlayer, expiryTime, actions);
+        insertUnique(record);
+        PersistenceManager.log("System", "generate_reward_key", "Generated Reward key "
+                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " of definition " + rewardKeyId);
+        return record;
+    }
+
+    public static KeyRecord generateCustomKey(List<Map<String, Object>> actions, int maxUses, UUID boundPlayer, long expiryTime) {
+        KeyRecord record = createCustomKeyRecord(actions, maxUses, boundPlayer, expiryTime);
+        insertUnique(record);
+        PersistenceManager.log("System", "generate_custom_key", "Generated Custom key "
+                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " with " + actions.size() + " actions");
+        return record;
+    }
+
+    public static KeyRecord createVipKeyRecord(String tierId, String durationStr, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
         if (maxUses <= 0) {
             throw new IllegalArgumentException("maxUses must be greater than 0");
         }
@@ -98,14 +122,10 @@ public final class KeyService {
         if (actions != null) {
             record.setActions(actions);
         }
-
-        insertUnique(record);
-        PersistenceManager.log("System", "generate_vip_key", "Generated VIP key "
-                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " for tier " + tierId);
         return record;
     }
 
-    public static KeyRecord generateRewardKey(String rewardKeyId, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+    public static KeyRecord createRewardKeyRecord(String rewardKeyId, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
         if (maxUses <= 0) {
             throw new IllegalArgumentException("maxUses must be greater than 0");
         }
@@ -129,14 +149,10 @@ public final class KeyService {
         if (actions != null) {
             record.setActions(actions);
         }
-
-        insertUnique(record);
-        PersistenceManager.log("System", "generate_reward_key", "Generated Reward key "
-                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " of definition " + rewardKeyId);
         return record;
     }
 
-    public static KeyRecord generateCustomKey(List<Map<String, Object>> actions, int maxUses, UUID boundPlayer, long expiryTime) {
+    public static KeyRecord createCustomKeyRecord(List<Map<String, Object>> actions, int maxUses, UUID boundPlayer, long expiryTime) {
         if (maxUses <= 0) {
             throw new IllegalArgumentException("maxUses must be greater than 0");
         }
@@ -154,10 +170,6 @@ public final class KeyService {
         record.setCreatedTime(System.currentTimeMillis());
         record.setExpiryTime(expiryTime);
         record.setActions(actions);
-
-        insertUnique(record);
-        PersistenceManager.log("System", "generate_custom_key", "Generated Custom key "
-                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " with " + actions.size() + " actions");
         return record;
     }
 

@@ -9,7 +9,7 @@ import br.com.pedrodalben.easyvip.service.ExpirationService;
 import br.com.pedrodalben.easyvip.service.KeyService;
 import br.com.pedrodalben.easyvip.service.PackageService;
 import br.com.pedrodalben.easyvip.service.VipService;
-import br.com.pedrodalben.easyvip.webstore.FulfillmentApiServer;
+import br.com.pedrodalben.easyvip.webstore.WebStoreFulfillmentService;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -45,14 +45,14 @@ public final class EasyVipFabric implements ModInitializer {
                 EasyVipConfig.loadAll();
                 PersistenceManager.initialize(configDir);
                 ExpirationService.start(server);
-                FulfillmentApiServer.start();
+                WebStoreFulfillmentService.start(configDir);
             } catch (Exception e) {
                 throw new RuntimeException("Failed to initialize EasyVip configuration", e);
             }
         });
 
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
-            FulfillmentApiServer.stop();
+            WebStoreFulfillmentService.stop();
             ExpirationService.stop();
             PersistenceManager.shutdown();
         });

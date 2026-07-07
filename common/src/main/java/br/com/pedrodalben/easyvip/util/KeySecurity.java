@@ -27,18 +27,19 @@ public final class KeySecurity {
 
     public static String fingerprintKey(String code) {
         if (code == null) {
-            return "null";
+            return "sha256:null";
         }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(code.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(16);
-            for (int i = 0; i < 6; i++) {
+            StringBuilder sb = new StringBuilder(24);
+            sb.append("sha256:");
+            for (int i = 0; i < 8; i++) {
                 sb.append(String.format("%02x", hash[i]));
             }
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
-            return "sha256-unavailable";
+            return "sha256:unavailable";
         }
     }
 
@@ -51,7 +52,10 @@ public final class KeySecurity {
             return null;
         }
         // Best-effort masking for common log patterns that include the raw code.
-        return details.replaceAll("(?i)(key[: ]*)(EVIP-[A-Z0-9-]+|[A-Z0-9-]{4,})", "$1***MASKED***");
+        String sanitized = details.replaceAll("(?i)(activation[_ -]?key\\s*[:=]\\s*)([A-Z0-9_-]{4,})", "$1***MASKED***");
+        sanitized = sanitized.replaceAll("(?i)(key\\s*[:=]\\s*)([A-Z0-9_-]{4,})", "$1***MASKED***");
+        sanitized = sanitized.replaceAll("(?i)EVIP-[A-Z0-9_-]{4,}", "***MASKED***");
+        return sanitized;
     }
 
     public static boolean looksLikeKeyCode(String value) {

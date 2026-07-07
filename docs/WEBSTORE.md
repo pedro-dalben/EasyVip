@@ -2,6 +2,8 @@
 
 Este modulo envia dados do jogador para uma loja web (Rails) quando ele entra no servidor, permitindo que a loja crie ou atualize perfis automaticamente.
 
+O fluxo de fulfillment por polling ficou separado em [`docs/integrations/webstore-fulfillment.md`](integrations/webstore-fulfillment.md).
+
 ---
 
 ## 1. Configuracao
@@ -151,7 +153,8 @@ O codigo puro nunca e persistido — apenas o hash vai para a loja.
 | `common/.../config/EasyVipConfig.java` | Carrega `webstore.toml` |
 | `neoforge/.../NeoForgeEasyVipMod.java` | Hook do evento de login |
 | `config/easyvip/webstore.toml` | Configuracao gerada |
-| `config/easyvip/data/webstore_sync.log` | Log dedicado |
+| `config/easyvip/data/webstore_sync.log` | Log dedicado de sync |
+| `config/easyvip/data/webstore_fulfillment.log` | Log dedicado de fulfillment |
 
 ---
 

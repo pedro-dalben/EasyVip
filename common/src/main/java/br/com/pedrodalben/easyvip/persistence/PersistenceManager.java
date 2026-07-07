@@ -558,13 +558,14 @@ public final class PersistenceManager {
     }
 
     public static void log(String operator, String action, String details) {
+        String safeDetails = br.com.pedrodalben.easyvip.util.KeySecurity.sanitizeAuditDetails(details);
         if (sqlMode) {
-            SqlDatabaseManager.log(new AuditLogRecord(operator, action, details));
+            SqlDatabaseManager.log(new AuditLogRecord(operator, action, safeDetails));
             return;
         }
         LOCK.writeLock().lock();
         try {
-            auditLogs.add(new AuditLogRecord(operator, action, details));
+            auditLogs.add(new AuditLogRecord(operator, action, safeDetails));
         } finally {
             LOCK.writeLock().unlock();
         }

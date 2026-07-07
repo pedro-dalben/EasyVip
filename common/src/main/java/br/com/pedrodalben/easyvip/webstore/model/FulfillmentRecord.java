@@ -7,15 +7,19 @@ public class FulfillmentRecord {
 
     private String fulfillmentId;
     private String orderId;
+    private String serverId;
     private String minecraftUuid;
     private String minecraftUsername;
     private String payloadDigest;
     private String status;
     private String requestKeyId;
     private long createdAt;
+    private Long claimedAt;
     private Long completedAt;
     private Long failedAt;
     private String failureCode;
+    private String errorMessage;
+    private long updatedAt;
 
     private final List<FulfillmentItemRecord> items = new ArrayList<>();
 
@@ -24,6 +28,9 @@ public class FulfillmentRecord {
 
     public String getOrderId() { return orderId; }
     public void setOrderId(String v) { this.orderId = v; }
+
+    public String getServerId() { return serverId; }
+    public void setServerId(String v) { this.serverId = v; }
 
     public String getMinecraftUuid() { return minecraftUuid; }
     public void setMinecraftUuid(String v) { this.minecraftUuid = v; }
@@ -43,6 +50,9 @@ public class FulfillmentRecord {
     public long getCreatedAt() { return createdAt; }
     public void setCreatedAt(long v) { this.createdAt = v; }
 
+    public Long getClaimedAt() { return claimedAt; }
+    public void setClaimedAt(Long v) { this.claimedAt = v; }
+
     public Long getCompletedAt() { return completedAt; }
     public void setCompletedAt(Long v) { this.completedAt = v; }
 
@@ -51,6 +61,12 @@ public class FulfillmentRecord {
 
     public String getFailureCode() { return failureCode; }
     public void setFailureCode(String v) { this.failureCode = v; }
+
+    public String getErrorMessage() { return errorMessage; }
+    public void setErrorMessage(String v) { this.errorMessage = v; }
+
+    public long getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(long v) { this.updatedAt = v; }
 
     public List<FulfillmentItemRecord> getItems() { return items; }
 }
