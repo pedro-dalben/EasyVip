@@ -1175,6 +1175,13 @@ public final class EasyVipCommands {
             return 0;
         }
         KeyRecord finalKey = key;
+
+        if (reveal) {
+            String opName = operatorName(src);
+            PersistenceManager.log(opName, "key_info_reveal",
+                    "Full key code revealed for " + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(finalKey.getCode()));
+        }
+
         src.sendSuccess(() -> {
             String displayCode = reveal ? finalKey.getCode() : br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(finalKey.getCode());
             return Component.literal("§7[§eEasyVip§7] §a" + displayCode + " §8| §f" + finalKey.getType()
@@ -1410,7 +1417,7 @@ public final class EasyVipCommands {
     private static String generateLinkCode() {
         String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         StringBuilder sb = new StringBuilder(8);
-        java.util.Random random = new java.util.Random();
+        java.security.SecureRandom random = new java.security.SecureRandom();
         for (int i = 0; i < 8; i++) {
             sb.append(chars.charAt(random.nextInt(chars.length())));
         }
