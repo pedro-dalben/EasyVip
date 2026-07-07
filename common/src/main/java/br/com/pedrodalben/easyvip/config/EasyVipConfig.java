@@ -1,6 +1,9 @@
 package br.com.pedrodalben.easyvip.config;
 
 import br.com.pedrodalben.easyvip.webstore.WebStoreConfig;
+import br.com.pedrodalben.easyvip.webstore.FulfillmentConfig;
+import br.com.pedrodalben.easyvip.webstore.FulfillmentKeyConfig;
+import br.com.pedrodalben.easyvip.webstore.FulfillmentProductConfig;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +21,7 @@ public final class EasyVipConfig {
     public static final RewardKeysConfig rewardKeys = new RewardKeysConfig();
     public static final IntegrationsConfig integrations = new IntegrationsConfig();
     public static final WebStoreConfig webstore = new WebStoreConfig();
+    public static final FulfillmentConfig fulfillment = new FulfillmentConfig();
 
     private EasyVipConfig() {
     }
@@ -1043,6 +1047,7 @@ public final class EasyVipConfig {
             map.put("sync_on_nick_change", webstore.syncOnNickChange);
             map.put("retry_max_attempts", webstore.retryMaxAttempts);
             map.put("retry_delay_seconds", webstore.retryDelaySeconds);
+            addFulfillmentDefaults(map);
             TomlWriter.writeFile(file, map);
         }
 
@@ -1056,6 +1061,90 @@ public final class EasyVipConfig {
         webstore.syncOnNickChange = getBoolean(data, "sync_on_nick_change", true);
         webstore.retryMaxAttempts = getInt(data, "retry_max_attempts", 3);
         webstore.retryDelaySeconds = getInt(data, "retry_delay_seconds", 5);
+        loadFulfillmentConfig(data);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void addFulfillmentDefaults(Map<String, Object> map) {
+        Map<String, Object> fulfillmentMap = new LinkedHashMap<>();
+        fulfillmentMap.put("enabled", false);
+        fulfillmentMap.put("bind_address", "127.0.0.1");
+        fulfillmentMap.put("port", 28765);
+        fulfillmentMap.put("max_request_bytes", 16384);
+        fulfillmentMap.put("timestamp_tolerance_seconds", 60);
+        fulfillmentMap.put("request_timeout_seconds", 10);
+        fulfillmentMap.put("allow_public_bind", false);
+        fulfillmentMap.put("require_sql", true);
+        fulfillmentMap.put("max_nonce_cache_size", 20000);
+
+        Map<String, Object> keys = new LinkedHashMap<>();
+        Map<String, Object> currentKey = new LinkedHashMap<>();
+        currentKey.put("secret_env", "EASYVIP_WEBSTORE_SIGNING_SECRET");
+        keys.put("current", currentKey);
+        fulfillmentMap.put("keys", keys);
+        map.put("fulfillment", fulfillmentMap);
+
+        Map<String, Object> products = new LinkedHashMap<>();
+        Map<String, Object> gems50 = new LinkedHashMap<>();
+        gems50.put("kind", "reward");
+        gems50.put("reward_key_id", "gems_50");
+        gems50.put("max_uses", 1);
+        gems50.put("expires_after", "365d");
+        gems50.put("bind_to_player", true);
+        products.put("gems_50", gems50);
+        map.put("products", products);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void loadFulfillmentConfig(Map<String, Object> data) {
+        fulfillment.products.clear();
+        fulfillment.keys.keys.clear();
+
+        Map<String, Object> fulfillmentData = asMap(data.get("fulfillment"));
+        if (fulfillmentData != null) {
+            fulfillment.enabled = getBoolean(fulfillmentData, "enabled", false);
+            fulfillment.bindAddress = getString(fulfillmentData, "bind_address", "127.0.0.1");
+            fulfillment.port = getInt(fulfillmentData, "port", 28765);
+            fulfillment.maxRequestBytes = getInt(fulfillmentData, "max_request_bytes", 16384);
+            fulfillment.timestampToleranceSeconds = getInt(fulfillmentData, "timestamp_tolerance_seconds", 60);
+            fulfillment.requestTimeoutSeconds = getInt(fulfillmentData, "request_timeout_seconds", 10);
+            fulfillment.allowPublicBind = getBoolean(fulfillmentData, "allow_public_bind", false);
+            fulfillment.requireSql = getBoolean(fulfillmentData, "require_sql", true);
+            fulfillment.maxNonceCacheSize = getInt(fulfillmentData, "max_nonce_cache_size", 20000);
+
+            Map<String, Object> keysData = asMap(fulfillmentData.get("keys"));
+            if (keysData != null) {
+                for (Map.Entry<String, Object> entry : keysData.entrySet()) {
+                    Map<String, Object> keyData = asMap(entry.getValue());
+                    if (keyData == null) continue;
+                    FulfillmentKeyConfig.KeyEntry ke = new FulfillmentKeyConfig.KeyEntry();
+                    ke.secretEnv = getString(keyData, "secret_env", "");
+                    ke.secret = getString(keyData, "secret", "");
+                    if ("current".equals(entry.getKey())) {
+                        fulfillment.keys.current = ke;
+                    }
+                    fulfillment.keys.keys.put(entry.getKey(), ke);
+                }
+            }
+        }
+
+        Map<String, Object> productsData = asMap(data.get("products"));
+        if (productsData != null) {
+            for (Map.Entry<String, Object> entry : productsData.entrySet()) {
+                Map<String, Object> productData = asMap(entry.getValue());
+                if (productData == null) continue;
+                FulfillmentProductConfig pc = new FulfillmentProductConfig();
+                pc.sku = entry.getKey();
+                pc.kind = getString(productData, "kind", "");
+                pc.tierId = getString(productData, "tier_id", "");
+                pc.duration = getString(productData, "duration", "");
+                pc.rewardKeyId = getString(productData, "reward_key_id", "");
+                pc.maxUses = getInt(productData, "max_uses", 1);
+                pc.expiresAfter = getString(productData, "expires_after", "");
+                pc.bindToPlayer = getBoolean(productData, "bind_to_player", true);
+                fulfillment.products.put(pc.sku, pc);
+            }
+        }
     }
 
     public static List<String> validate() {

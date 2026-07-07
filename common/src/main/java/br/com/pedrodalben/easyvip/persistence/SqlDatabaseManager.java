@@ -1,6 +1,8 @@
 package br.com.pedrodalben.easyvip.persistence;
 
 import br.com.pedrodalben.easyvip.model.*;
+import br.com.pedrodalben.easyvip.webstore.model.FulfillmentRecord;
+import br.com.pedrodalben.easyvip.webstore.model.FulfillmentItemRecord;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
@@ -109,6 +111,36 @@ public final class SqlDatabaseManager {
                     operator VARCHAR(255) DEFAULT NULL,
                     action VARCHAR(255) DEFAULT NULL,
                     details TEXT
+                )
+            """);
+
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS easyvip_fulfillments (
+                    fulfillment_id VARCHAR(36) PRIMARY KEY,
+                    order_id VARCHAR(255) NOT NULL,
+                    minecraft_uuid VARCHAR(36) NOT NULL,
+                    minecraft_username VARCHAR(255),
+                    payload_digest VARCHAR(64),
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    request_key_id VARCHAR(255),
+                    created_at BIGINT NOT NULL DEFAULT 0,
+                    completed_at BIGINT DEFAULT NULL,
+                    failed_at BIGINT DEFAULT NULL,
+                    failure_code VARCHAR(50) DEFAULT NULL
+                )
+            """);
+
+            stmt.execute("""
+                CREATE TABLE IF NOT EXISTS easyvip_fulfillment_items (
+                    line_item_id VARCHAR(36) PRIMARY KEY,
+                    fulfillment_id VARCHAR(36) NOT NULL,
+                    product_sku VARCHAR(255) NOT NULL,
+                    quantity INT NOT NULL DEFAULT 1,
+                    key_code VARCHAR(255),
+                    key_fingerprint VARCHAR(255),
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    created_at BIGINT NOT NULL DEFAULT 0,
+                    INDEX idx_fulfillment_items_fulfillment (fulfillment_id)
                 )
             """);
         } catch (SQLException e) {
@@ -604,5 +636,135 @@ public final class SqlDatabaseManager {
             LOCK.readLock().unlock();
         }
         return result;
+    }
+
+    // ─── Fulfillment Operations ──────────────────────────────
+
+    static Connection rawConnection() throws SQLException {
+        return getConnection();
+    }
+
+    public static FulfillmentRecord getFulfillment(String fulfillmentId) {
+        LOCK.readLock().lock();
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                 "SELECT * FROM easyvip_fulfillments WHERE fulfillment_id = ?")) {
+            ps.setString(1, fulfillmentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    FulfillmentRecord rec = mapFulfillment(rs);
+                    List<FulfillmentItemRecord> items = getFulfillmentItems(conn, fulfillmentId);
+                    rec.getItems().addAll(items);
+                    return rec;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[EasyVip-SQL] Error reading fulfillment " + fulfillmentId + ": " + e.getMessage());
+        } finally {
+            LOCK.readLock().unlock();
+        }
+        return null;
+    }
+
+    public static boolean insertFulfillmentTransaction(FulfillmentRecord fulfillment) {
+        LOCK.writeLock().lock();
+        Connection conn = null;
+        try {
+            conn = getConnection();
+            conn.setAutoCommit(false);
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO easyvip_fulfillments (fulfillment_id, order_id, minecraft_uuid, minecraft_username, "
+                     + "payload_digest, status, request_key_id, created_at, completed_at) "
+                     + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                ps.setString(1, fulfillment.getFulfillmentId());
+                ps.setString(2, fulfillment.getOrderId());
+                ps.setString(3, fulfillment.getMinecraftUuid());
+                ps.setString(4, fulfillment.getMinecraftUsername());
+                ps.setString(5, fulfillment.getPayloadDigest());
+                ps.setString(6, fulfillment.getStatus());
+                ps.setString(7, fulfillment.getRequestKeyId());
+                ps.setLong(8, fulfillment.getCreatedAt());
+                if (fulfillment.getCompletedAt() != null) {
+                    ps.setLong(9, fulfillment.getCompletedAt());
+                } else {
+                    ps.setNull(9, java.sql.Types.BIGINT);
+                }
+                ps.executeUpdate();
+            }
+
+            for (FulfillmentItemRecord item : fulfillment.getItems()) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                         "INSERT INTO easyvip_fulfillment_items (line_item_id, fulfillment_id, product_sku, "
+                         + "quantity, key_code, key_fingerprint, status, created_at) "
+                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                    ps.setString(1, item.getLineItemId());
+                    ps.setString(2, item.getFulfillmentId());
+                    ps.setString(3, item.getProductSku());
+                    ps.setInt(4, item.getQuantity());
+                    ps.setString(5, item.getKeyCode());
+                    ps.setString(6, item.getKeyFingerprint());
+                    ps.setString(7, item.getStatus());
+                    ps.setLong(8, item.getCreatedAt());
+                    ps.executeUpdate();
+                }
+            }
+
+            conn.commit();
+            return true;
+        } catch (SQLException e) {
+            if (conn != null) {
+                try { conn.rollback(); } catch (SQLException ignored) {}
+            }
+            System.err.println("[EasyVip-SQL] Error inserting fulfillment: " + e.getMessage());
+            return false;
+        } finally {
+            if (conn != null) {
+                try { conn.setAutoCommit(true); } catch (SQLException ignored) {}
+                try { conn.close(); } catch (SQLException ignored) {}
+            }
+            LOCK.writeLock().unlock();
+        }
+    }
+
+    private static List<FulfillmentItemRecord> getFulfillmentItems(Connection conn, String fulfillmentId) throws SQLException {
+        List<FulfillmentItemRecord> result = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                 "SELECT * FROM easyvip_fulfillment_items WHERE fulfillment_id = ?")) {
+            ps.setString(1, fulfillmentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    FulfillmentItemRecord item = new FulfillmentItemRecord();
+                    item.setLineItemId(rs.getString("line_item_id"));
+                    item.setFulfillmentId(rs.getString("fulfillment_id"));
+                    item.setProductSku(rs.getString("product_sku"));
+                    item.setQuantity(rs.getInt("quantity"));
+                    item.setKeyCode(rs.getString("key_code"));
+                    item.setKeyFingerprint(rs.getString("key_fingerprint"));
+                    item.setStatus(rs.getString("status"));
+                    item.setCreatedAt(rs.getLong("created_at"));
+                    result.add(item);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static FulfillmentRecord mapFulfillment(ResultSet rs) throws SQLException {
+        FulfillmentRecord rec = new FulfillmentRecord();
+        rec.setFulfillmentId(rs.getString("fulfillment_id"));
+        rec.setOrderId(rs.getString("order_id"));
+        rec.setMinecraftUuid(rs.getString("minecraft_uuid"));
+        rec.setMinecraftUsername(rs.getString("minecraft_username"));
+        rec.setPayloadDigest(rs.getString("payload_digest"));
+        rec.setStatus(rs.getString("status"));
+        rec.setRequestKeyId(rs.getString("request_key_id"));
+        rec.setCreatedAt(rs.getLong("created_at"));
+        long completedAt = rs.getLong("completed_at");
+        if (!rs.wasNull()) rec.setCompletedAt(completedAt);
+        long failedAt = rs.getLong("failed_at");
+        if (!rs.wasNull()) rec.setFailedAt(failedAt);
+        rec.setFailureCode(rs.getString("failure_code"));
+        return rec;
     }
 }
