@@ -7,6 +7,7 @@ import br.com.pedrodalben.easyvip.persistence.PersistenceManager;
 import br.com.pedrodalben.easyvip.platform.PermissionBridge;
 import br.com.pedrodalben.easyvip.service.*;
 import br.com.pedrodalben.easyvip.webstore.WebStoreSyncService;
+import br.com.pedrodalben.easyvip.webstore.WebStoreFulfillmentService;
 import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -253,7 +254,10 @@ public final class EasyVipCommands {
                 .requires(src -> hasPermission(src, "easyvip.admin"));
         key.then(Commands.literal("list").executes(EasyVipCommands::executeKeyList));
         key.then(Commands.literal("info")
-                .then(Commands.argument("code", StringArgumentType.word()).executes(EasyVipCommands::executeKeyInfo)));
+                .then(Commands.argument("code", StringArgumentType.word())
+                        .executes(EasyVipCommands::executeKeyInfo)
+                        .then(Commands.literal("reveal")
+                                .executes(ctx -> executeKeyInfo(ctx, true)))));
         key.then(Commands.literal("delete")
                 .then(Commands.argument("code", StringArgumentType.word()).executes(EasyVipCommands::executeKeyDelete)));
         admin.then(key);
@@ -273,6 +277,10 @@ public final class EasyVipCommands {
                 .executes(ctx -> executeAudit(ctx, 1))
                 .then(Commands.argument("page", IntegerArgumentType.integer(1))
                         .executes(ctx -> executeAudit(ctx, IntegerArgumentType.getInteger(ctx, "page")))));
+
+        admin.then(Commands.literal("webstore")
+                .then(Commands.literal("status")
+                        .executes(EasyVipCommands::executeWebStoreStatus)));
 
         root.then(admin);
 
@@ -339,6 +347,7 @@ public final class EasyVipCommands {
 
         if (hasPermission(src, "easyvip.admin")) {
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin ... §8- §7" + EasyVipConfig.localized("administrative commands", "comandos administrativos")), false);
+            src.sendSuccess(() -> Component.literal("§7- §f/easyvip admin webstore status §8- §7" + EasyVipConfig.localized("fulfillment state", "estado do fulfillment")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip createvip <id> <display_name> [color] §8- §7" + EasyVipConfig.localized("create a new VIP definition", "criar uma nova definição de VIP")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip key ... §8- §7" + EasyVipConfig.localized("manage keys", "gerenciar chaves")), false);
             src.sendSuccess(() -> Component.literal("§7- §f/easyvip package ... §8- §7" + EasyVipConfig.localized("manage packages", "gerenciar pacotes")), false);
@@ -923,7 +932,7 @@ public final class EasyVipCommands {
         src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Key generated successfully: ", "Chave gerada com sucesso: ")
                 + "§e" + keyRec.getCode()
                 + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + finalMaxUses
-                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), false);
         return 1;
     }
 
@@ -966,7 +975,7 @@ public final class EasyVipCommands {
         src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Command key generated successfully: ", "Chave de comando gerada com sucesso: ")
                 + "§e" + keyRec.getCode()
                 + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
-                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), false);
         return 1;
     }
 
@@ -996,7 +1005,7 @@ public final class EasyVipCommands {
         src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Item key generated successfully: ", "Chave de item gerada com sucesso: ")
                 + "§e" + keyRec.getCode()
                 + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
-                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), false);
         return 1;
     }
 
@@ -1036,7 +1045,7 @@ public final class EasyVipCommands {
         src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("ItemStack key generated successfully: ", "Chave de itemstack gerada com sucesso: ")
                 + "§e" + keyRec.getCode()
                 + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
-                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), false);
         return 1;
     }
 
@@ -1087,7 +1096,7 @@ public final class EasyVipCommands {
         src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Custom action key generated successfully: ", "Chave de ações personalizadas gerada com sucesso: ")
                 + "§e" + keyRec.getCode()
                 + " §a(" + EasyVipConfig.localized("Uses", "Usos") + ": §f" + maxUses
-                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), true);
+                + "§a, " + EasyVipConfig.localized("Player", "Jogador") + ": §f" + finalBoundName + "§a)"), false);
         return 1;
     }
 
@@ -1150,24 +1159,39 @@ public final class EasyVipCommands {
         List<KeyRecord> keys = PersistenceManager.getAllKeys();
         src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §e" + EasyVipConfig.localized("Registered keys: ", "Keys cadastradas: ") + "§f" + keys.size()), false);
         for (KeyRecord key : keys) {
-            src.sendSuccess(() -> Component.literal("§7- §f" + key.getCode() + " §8| §e" + key.getType() + " §8| §7" + EasyVipConfig.localized("uses", "usos") + " " + key.getUsedCount() + "/" + key.getMaxUses()), false);
+            String displayCode = br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(key.getCode());
+            src.sendSuccess(() -> Component.literal("§7- §f" + displayCode + " §8| §e" + key.getType() + " §8| §7" + EasyVipConfig.localized("uses", "usos") + " " + key.getUsedCount() + "/" + key.getMaxUses()), false);
         }
         return 1;
     }
 
     private static int executeKeyInfo(CommandContext<CommandSourceStack> ctx) {
+        return executeKeyInfo(ctx, false);
+    }
+
+    private static int executeKeyInfo(CommandContext<CommandSourceStack> ctx, boolean reveal) {
         CommandSourceStack src = ctx.getSource();
         String code = StringArgumentType.getString(ctx, "code").trim();
         KeyRecord key = PersistenceManager.getKey(code);
         if (key == null && !EasyVipConfig.common.caseSensitiveKeys) {
-            key = PersistenceManager.getKey(code.toUpperCase());
+            key = PersistenceManager.getKey(code.toUpperCase(Locale.ROOT));
         }
         if (key == null) {
             src.sendFailure(Component.literal("§c" + EasyVipConfig.localized("Key not found.", "Chave não encontrada.")));
             return 0;
         }
         KeyRecord finalKey = key;
-        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + finalKey.getCode() + " §8| §f" + finalKey.getType()
+
+        String displayCode = br.com.pedrodalben.easyvip.util.KeySecurity.maskKey(finalKey.getCode());
+        if (reveal) {
+            String opName = operatorName(src);
+            PersistenceManager.log(opName, "key_info_reveal",
+                    "Key info requested for " + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(finalKey.getCode()));
+        }
+
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §a" + displayCode
+                + " §8| §7" + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(finalKey.getCode())
+                + " §8| §f" + finalKey.getType()
                 + " §8| §f" + EasyVipConfig.localized("used", "usado") + " " + finalKey.getUsedCount() + "/" + finalKey.getMaxUses()), false);
         return 1;
     }
@@ -1237,7 +1261,10 @@ public final class EasyVipCommands {
         for (int i = fromIndex; i < toIndex; i++) {
             AuditLogRecord record = ordered.get(i);
             String timestamp = formatter.format(Instant.ofEpochMilli(record.getTimestamp()));
-            String details = record.getDetails() != null ? record.getDetails() : "";
+            String details = br.com.pedrodalben.easyvip.util.KeySecurity.sanitizeAuditDetails(record.getDetails());
+            if (details == null) {
+                details = "";
+            }
             String line = String.format(
                     "§7- §f%s §8| §e%s §8| §a%s §8| §7%s",
                     timestamp,
@@ -1248,6 +1275,13 @@ public final class EasyVipCommands {
             src.sendSuccess(() -> Component.literal(line), false);
         }
 
+        return 1;
+    }
+
+    private static int executeWebStoreStatus(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String status = WebStoreFulfillmentService.statusSummary();
+        src.sendSuccess(() -> Component.literal("§7[§eEasyVip§7] §e" + EasyVipConfig.localized("WebStore fulfillment status:", "Status do fulfillment da WebStore:") + " §f" + status), false);
         return 1;
     }
 
@@ -1331,6 +1365,8 @@ public final class EasyVipCommands {
             var server = src.getServer();
             if (server != null) {
                 ExpirationService.reload(server);
+                java.nio.file.Path configDir = server.getServerDirectory().resolve("config").resolve("easyvip");
+                WebStoreFulfillmentService.reload(configDir);
             }
             src.sendSuccess(() -> Component.literal(
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.messages.reloadSuccess, new HashMap<>())
@@ -1396,7 +1432,7 @@ public final class EasyVipCommands {
     private static String generateLinkCode() {
         String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         StringBuilder sb = new StringBuilder(8);
-        java.util.Random random = new java.util.Random();
+        java.security.SecureRandom random = new java.security.SecureRandom();
         for (int i = 0; i < 8; i++) {
             sb.append(chars.charAt(random.nextInt(chars.length())));
         }

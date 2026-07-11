@@ -1,6 +1,9 @@
 package br.com.pedrodalben.easyvip.config;
 
 import br.com.pedrodalben.easyvip.webstore.WebStoreConfig;
+import br.com.pedrodalben.easyvip.webstore.FulfillmentConfig;
+import br.com.pedrodalben.easyvip.webstore.FulfillmentKeyConfig;
+import br.com.pedrodalben.easyvip.webstore.FulfillmentProductConfig;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +21,7 @@ public final class EasyVipConfig {
     public static final RewardKeysConfig rewardKeys = new RewardKeysConfig();
     public static final IntegrationsConfig integrations = new IntegrationsConfig();
     public static final WebStoreConfig webstore = new WebStoreConfig();
+    public static final FulfillmentConfig fulfillment = new FulfillmentConfig();
 
     private EasyVipConfig() {
     }
@@ -1043,12 +1047,14 @@ public final class EasyVipConfig {
             map.put("enabled", webstore.enabled);
             map.put("api_url", webstore.apiUrl);
             map.put("api_token", webstore.apiToken);
+            map.put("server_id", webstore.serverId);
             map.put("sync_on_register", webstore.syncOnRegister);
             map.put("sync_on_login", webstore.syncOnLogin);
             map.put("sync_on_join", webstore.syncOnJoin);
             map.put("sync_on_nick_change", webstore.syncOnNickChange);
             map.put("retry_max_attempts", webstore.retryMaxAttempts);
             map.put("retry_delay_seconds", webstore.retryDelaySeconds);
+            addFulfillmentDefaults(map);
             TomlWriter.writeFile(file, map);
         }
 
@@ -1056,12 +1062,104 @@ public final class EasyVipConfig {
         webstore.enabled = getBoolean(data, "enabled", false);
         webstore.apiUrl = getString(data, "api_url", "http://localhost:3000").replaceAll("/+$", "");
         webstore.apiToken = getString(data, "api_token", "");
+        webstore.serverId = getString(data, "server_id", "");
         webstore.syncOnRegister = getBoolean(data, "sync_on_register", true);
         webstore.syncOnLogin = getBoolean(data, "sync_on_login", true);
         webstore.syncOnJoin = getBoolean(data, "sync_on_join", true);
         webstore.syncOnNickChange = getBoolean(data, "sync_on_nick_change", true);
         webstore.retryMaxAttempts = getInt(data, "retry_max_attempts", 3);
         webstore.retryDelaySeconds = getInt(data, "retry_delay_seconds", 5);
+        loadFulfillmentConfig(data);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void addFulfillmentDefaults(Map<String, Object> map) {
+        Map<String, Object> fulfillmentMap = new LinkedHashMap<>();
+        fulfillmentMap.put("enabled", false);
+        fulfillmentMap.put("server_id", "");
+        fulfillmentMap.put("poll_interval_seconds", 15);
+        fulfillmentMap.put("claim_limit", 20);
+        fulfillmentMap.put("request_timeout_seconds", 10);
+        fulfillmentMap.put("timestamp_tolerance_seconds", 60);
+        fulfillmentMap.put("key_id", "");
+        fulfillmentMap.put("key_prefix", "EVIP-");
+        fulfillmentMap.put("secret_env", "EASYVIP_FULFILLMENT_SECRET");
+        fulfillmentMap.put("token_env", "EASYVIP_FULFILLMENT_TOKEN");
+        map.put("fulfillment", fulfillmentMap);
+
+        Map<String, Object> products = new LinkedHashMap<>();
+        Map<String, Object> gems50 = new LinkedHashMap<>();
+        gems50.put("type", "reward");
+        gems50.put("reward_key_id", "gems_50");
+        gems50.put("max_uses", 1);
+        gems50.put("expires_after", "365d");
+        gems50.put("bind_to_player", true);
+        products.put("gems_50", gems50);
+
+        Map<String, Object> vip30 = new LinkedHashMap<>();
+        vip30.put("type", "vip");
+        vip30.put("tier_id", "ultraball");
+        vip30.put("duration", "30d");
+        vip30.put("max_uses", 1);
+        vip30.put("expires_after", "365d");
+        vip30.put("bind_to_player", true);
+        products.put("vip_ultraball_30d", vip30);
+        map.put("products", products);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void loadFulfillmentConfig(Map<String, Object> data) {
+        fulfillment.products.clear();
+        fulfillment.keys.keys.clear();
+
+        Map<String, Object> fulfillmentData = asMap(data.get("fulfillment"));
+        if (fulfillmentData != null) {
+            fulfillment.enabled = getBoolean(fulfillmentData, "enabled", false);
+            fulfillment.serverId = getString(fulfillmentData, "server_id", "");
+            fulfillment.pollIntervalSeconds = getInt(fulfillmentData, "poll_interval_seconds", 15);
+            fulfillment.claimLimit = getInt(fulfillmentData, "claim_limit", 20);
+            fulfillment.requestTimeoutSeconds = getInt(fulfillmentData, "request_timeout_seconds", 10);
+            fulfillment.timestampToleranceSeconds = getInt(fulfillmentData, "timestamp_tolerance_seconds", 60);
+            fulfillment.keyId = getString(fulfillmentData, "key_id", "");
+            fulfillment.keyPrefix = getString(fulfillmentData, "key_prefix", "EVIP-");
+            fulfillment.secretEnv = getString(fulfillmentData, "secret_env", "EASYVIP_FULFILLMENT_SECRET");
+            fulfillment.tokenEnv = getString(fulfillmentData, "token_env", "EASYVIP_FULFILLMENT_TOKEN");
+            fulfillment.token = getString(fulfillmentData, "token", "");
+
+            Map<String, Object> keysData = asMap(fulfillmentData.get("keys"));
+            if (keysData != null) {
+                for (Map.Entry<String, Object> entry : keysData.entrySet()) {
+                    Map<String, Object> keyData = asMap(entry.getValue());
+                    if (keyData == null) continue;
+                    FulfillmentKeyConfig.KeyEntry ke = new FulfillmentKeyConfig.KeyEntry();
+                    ke.secretEnv = getString(keyData, "secret_env", "");
+                    ke.secret = getString(keyData, "secret", "");
+                    if ("current".equals(entry.getKey())) {
+                        fulfillment.keys.current = ke;
+                    }
+                    fulfillment.keys.keys.put(entry.getKey(), ke);
+                }
+            }
+        }
+
+        Map<String, Object> productsData = asMap(data.get("products"));
+        if (productsData != null) {
+            for (Map.Entry<String, Object> entry : productsData.entrySet()) {
+                Map<String, Object> productData = asMap(entry.getValue());
+                if (productData == null) continue;
+                FulfillmentProductConfig pc = new FulfillmentProductConfig();
+                pc.sku = entry.getKey();
+                pc.type = getString(productData, "type", getString(productData, "kind", ""));
+                pc.kind = getString(productData, "kind", "");
+                pc.tierId = getString(productData, "tier_id", "");
+                pc.duration = getString(productData, "duration", "");
+                pc.rewardKeyId = getString(productData, "reward_key_id", "");
+                pc.maxUses = getInt(productData, "max_uses", 1);
+                pc.expiresAfter = getString(productData, "expires_after", "");
+                pc.bindToPlayer = getBoolean(productData, "bind_to_player", true);
+                fulfillment.products.put(pc.sku, pc);
+            }
+        }
     }
 
     public static List<String> validate() {
@@ -1077,6 +1175,27 @@ public final class EasyVipConfig {
                     "common.toml: key_length must be at least 4.",
                     "common.toml: key_length deve ser no mínimo 4."
             ));
+        }
+        if (common.keyCharset == null || common.keyCharset.length() < 2) {
+            errors.add(localized(
+                    "common.toml: key_charset must have at least 2 characters.",
+                    "common.toml: key_charset deve ter pelo menos 2 caracteres."
+            ));
+        } else {
+            long uniqueChars = common.keyCharset.chars().distinct().count();
+            if (uniqueChars < 2) {
+                errors.add(localized(
+                        "common.toml: key_charset must contain at least 2 distinct characters.",
+                        "common.toml: key_charset deve conter pelo menos 2 caracteres distintos."
+                ));
+            }
+            double entropyBits = Math.log(Math.pow(uniqueChars, common.keyLength)) / Math.log(2);
+            if (entropyBits < 32) {
+                errors.add(localized(
+                        "common.toml: key_charset + key_length combination provides less than 32 bits of entropy (" + String.format("%.1f", entropyBits) + " bits). Increase charset size or key_length.",
+                        "common.toml: combinação key_charset + key_length fornece menos de 32 bits de entropia (" + String.format("%.1f", entropyBits) + " bits). Aumente o charset ou key_length."
+                ));
+            }
         }
         if (!common.defaultActivationMode.equals("extend") && !common.defaultActivationMode.equals("replace") &&
             !common.defaultActivationMode.equals("stack") && !common.defaultActivationMode.equals("deny")) {
@@ -1205,6 +1324,53 @@ public final class EasyVipConfig {
                         "reward_keys.toml: reward key ID cannot be empty.",
                         "reward_keys.toml: ID do reward key não pode ser vazio."
                 ));
+            }
+        }
+        if (fulfillment.enabled) {
+            if (!integrations.sqlEnabled) {
+                errors.add(localized(
+                        "webstore.toml: fulfillment.enabled requires SQL mode.",
+                        "webstore.toml: fulfillment.enabled requer modo SQL."
+                ));
+            }
+            if (fulfillment.serverId == null || fulfillment.serverId.isBlank()) {
+                errors.add(localized(
+                        "webstore.toml: fulfillment.server_id cannot be empty.",
+                        "webstore.toml: fulfillment.server_id não pode ser vazio."
+                ));
+            }
+            if (fulfillment.keyId == null || fulfillment.keyId.isBlank()) {
+                errors.add(localized(
+                        "webstore.toml: fulfillment.key_id cannot be empty.",
+                        "webstore.toml: fulfillment.key_id não pode ser vazio."
+                ));
+            }
+            if (fulfillment.keyPrefix == null || fulfillment.keyPrefix.isBlank()) {
+                errors.add(localized(
+                        "webstore.toml: fulfillment.key_prefix cannot be empty.",
+                        "webstore.toml: fulfillment.key_prefix não pode ser vazio."
+                ));
+            }
+            if (fulfillment.pollIntervalSeconds < 5) {
+                errors.add(localized(
+                        "webstore.toml: fulfillment.poll_interval_seconds must be at least 5.",
+                        "webstore.toml: fulfillment.poll_interval_seconds deve ser no mínimo 5."
+                ));
+            }
+            if (fulfillment.claimLimit < 1 || fulfillment.claimLimit > 100) {
+                errors.add(localized(
+                        "webstore.toml: fulfillment.claim_limit must be between 1 and 100.",
+                        "webstore.toml: fulfillment.claim_limit deve ficar entre 1 e 100."
+                ));
+            }
+            for (FulfillmentProductConfig product : fulfillment.products.values()) {
+                String type = product.normalizedType();
+                if (!"vip".equals(type) && !"reward".equals(type)) {
+                    errors.add(localized(
+                            "webstore.toml: product " + product.sku + " must be type reward or vip.",
+                            "webstore.toml: produto " + product.sku + " deve ser do tipo reward ou vip."
+                    ));
+                }
             }
         }
         return errors;

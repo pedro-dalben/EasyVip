@@ -5,6 +5,7 @@ public final class WebStoreConfig {
     public boolean enabled = false;
     public String apiUrl = "http://localhost:3000";
     public String apiToken = "";
+    public String serverId = "";
     public boolean syncOnRegister = true;
     public boolean syncOnLogin = true;
     public boolean syncOnJoin = true;
@@ -18,5 +19,17 @@ public final class WebStoreConfig {
 
     public String playersSyncEndpoint() {
         return apiUrl + "/api/v1/minecraft/players/sync";
+    }
+
+    public String fulfillmentClaimEndpoint() {
+        return apiUrl + "/api/v1/minecraft/fulfillments/claim";
+    }
+
+    public String fulfillmentCompleteEndpoint(String fulfillmentId) {
+        return apiUrl + "/api/v1/minecraft/fulfillments/" + fulfillmentId + "/complete";
+    }
+
+    public String fulfillmentFailEndpoint(String fulfillmentId) {
+        return apiUrl + "/api/v1/minecraft/fulfillments/" + fulfillmentId + "/fail";
     }
 }

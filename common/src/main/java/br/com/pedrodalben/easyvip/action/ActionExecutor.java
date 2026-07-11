@@ -186,8 +186,17 @@ public final class ActionExecutor {
                 String command = getString(action, "command", "");
                 if (!command.isEmpty()) {
                     String cmd = resolvePlaceholders(command, context);
+                    String normalized = sanitizeCommand(cmd);
+                    if (normalized == null) {
+                        System.err.println("[EasyVip] Player command blocked by security normalization: " + cmd);
+                        return false;
+                    }
+                    if (!isCommandAllowed(normalized)) {
+                        System.err.println("[EasyVip] Player command blocked by security allowlist: " + normalized);
+                        return false;
+                    }
                     if (server != null) {
-                        server.getCommands().performPrefixedCommand(player.createCommandSourceStack(), cmd);
+                        server.getCommands().performPrefixedCommand(player.createCommandSourceStack(), normalized);
                         return true;
                     }
                 }

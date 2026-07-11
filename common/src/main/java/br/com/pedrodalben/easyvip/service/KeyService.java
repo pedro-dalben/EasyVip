@@ -16,12 +16,16 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 public final class KeyService {
 
-    private static final Map<UUID, PendingConfirmation> confirmations = new HashMap<>();
-    private static final Map<UUID, Map<CommandThrottleType, Long>> commandCooldowns = new HashMap<>();
+    private static final ConcurrentHashMap<UUID, PendingConfirmation> confirmations = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, Map<CommandThrottleType, Long>> commandCooldowns = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Object> KEY_LOCKS = new ConcurrentHashMap<>();
+
+    private static final int MAX_GENERATION_ATTEMPTS = 1000;
 
     private enum CommandThrottleType {
         USE,
@@ -58,22 +62,56 @@ public final class KeyService {
     }
 
     public static String generateRandomCode() {
-        return generateRandomCode(PersistenceManager::getKey);
-    }
-
-    public static String generateRandomCode(java.util.function.Function<String, KeyRecord> keyLookup) {
-        return UniqueCodeGenerator.generate(
+        return UniqueCodeGenerator.generateCandidate(
                 EasyVipConfig.common.keyCharset,
                 EasyVipConfig.common.keyLength,
-                EasyVipConfig.common.keyPrefix,
-                candidate -> keyLookup.apply(candidate) == null,
-                1000
+                EasyVipConfig.common.keyPrefix
         );
     }
 
     public static KeyRecord generateVipKey(String tierId, String durationStr, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+        KeyRecord record = createVipKeyRecord(tierId, durationStr, maxUses, boundPlayer, expiryTime, actions);
+        insertUnique(record);
+        PersistenceManager.log("System", "generate_vip_key", "Generated VIP key "
+                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " for tier " + tierId);
+        return record;
+    }
+
+    public static KeyRecord generateRewardKey(String rewardKeyId, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+        KeyRecord record = createRewardKeyRecord(rewardKeyId, maxUses, boundPlayer, expiryTime, actions);
+        insertUnique(record);
+        PersistenceManager.log("System", "generate_reward_key", "Generated Reward key "
+                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " of definition " + rewardKeyId);
+        return record;
+    }
+
+    public static KeyRecord generateCustomKey(List<Map<String, Object>> actions, int maxUses, UUID boundPlayer, long expiryTime) {
+        KeyRecord record = createCustomKeyRecord(actions, maxUses, boundPlayer, expiryTime);
+        insertUnique(record);
+        PersistenceManager.log("System", "generate_custom_key", "Generated Custom key "
+                + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(record.getCode()) + " with " + actions.size() + " actions");
+        return record;
+    }
+
+    public static KeyRecord createVipKeyRecord(String tierId, String durationStr, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+        if (maxUses <= 0) {
+            throw new IllegalArgumentException("maxUses must be greater than 0");
+        }
+        if (tierId == null || tierId.isBlank()) {
+            throw new IllegalArgumentException("tierId cannot be empty");
+        }
+        if (!EasyVipConfig.tiers.list.containsKey(tierId)) {
+            throw new IllegalArgumentException("Unknown VIP tier: " + tierId);
+        }
+        long duration = br.com.pedrodalben.easyvip.util.DurationParser.parseDurationMillis(durationStr);
+        if (duration == 0 || (duration < 0 && duration != -1)) {
+            throw new IllegalArgumentException("Invalid VIP duration: " + durationStr);
+        }
+        if (expiryTime < -1) {
+            throw new IllegalArgumentException("Invalid key expiry time");
+        }
+
         KeyRecord record = new KeyRecord();
-        record.setCode(generateRandomCode());
         record.setType("vip");
         record.setTierId(tierId);
         record.setDuration(durationStr);
@@ -84,15 +122,24 @@ public final class KeyService {
         if (actions != null) {
             record.setActions(actions);
         }
-
-        PersistenceManager.putKey(record);
-        PersistenceManager.log("System", "generate_vip_key", "Generated VIP key " + record.getCode() + " for tier " + tierId);
         return record;
     }
 
-    public static KeyRecord generateRewardKey(String rewardKeyId, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+    public static KeyRecord createRewardKeyRecord(String rewardKeyId, int maxUses, UUID boundPlayer, long expiryTime, List<Map<String, Object>> actions) {
+        if (maxUses <= 0) {
+            throw new IllegalArgumentException("maxUses must be greater than 0");
+        }
+        if (rewardKeyId == null || rewardKeyId.isBlank()) {
+            throw new IllegalArgumentException("rewardKeyId cannot be empty");
+        }
+        if (!EasyVipConfig.rewardKeys.list.containsKey(rewardKeyId)) {
+            throw new IllegalArgumentException("Unknown reward key: " + rewardKeyId);
+        }
+        if (expiryTime < -1) {
+            throw new IllegalArgumentException("Invalid key expiry time");
+        }
+
         KeyRecord record = new KeyRecord();
-        record.setCode(generateRandomCode());
         record.setType("reward");
         record.setRewardKeyId(rewardKeyId);
         record.setMaxUses(maxUses);
@@ -102,129 +149,180 @@ public final class KeyService {
         if (actions != null) {
             record.setActions(actions);
         }
-
-        PersistenceManager.putKey(record);
-        PersistenceManager.log("System", "generate_reward_key", "Generated Reward key " + record.getCode() + " of definition " + rewardKeyId);
         return record;
     }
 
-    public static KeyRecord generateCustomKey(List<Map<String, Object>> actions, int maxUses, UUID boundPlayer, long expiryTime) {
+    public static KeyRecord createCustomKeyRecord(List<Map<String, Object>> actions, int maxUses, UUID boundPlayer, long expiryTime) {
+        if (maxUses <= 0) {
+            throw new IllegalArgumentException("maxUses must be greater than 0");
+        }
+        if (actions == null || actions.isEmpty()) {
+            throw new IllegalArgumentException("custom key actions cannot be empty");
+        }
+        if (expiryTime < -1) {
+            throw new IllegalArgumentException("Invalid key expiry time");
+        }
+
         KeyRecord record = new KeyRecord();
-        record.setCode(generateRandomCode());
         record.setType("custom");
         record.setMaxUses(maxUses);
         record.setBoundPlayerUuid(boundPlayer);
         record.setCreatedTime(System.currentTimeMillis());
         record.setExpiryTime(expiryTime);
-        if (actions != null) {
-            record.setActions(actions);
-        }
-
-        PersistenceManager.putKey(record);
-        PersistenceManager.log("System", "generate_custom_key", "Generated Custom key " + record.getCode() + " with " + (actions != null ? actions.size() : 0) + " actions");
+        record.setActions(actions);
         return record;
     }
 
+    private static void insertUnique(KeyRecord record) {
+        for (int attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
+            record.setCode(UniqueCodeGenerator.generateCandidate(
+                    EasyVipConfig.common.keyCharset,
+                    EasyVipConfig.common.keyLength,
+                    EasyVipConfig.common.keyPrefix
+            ));
+            KeyRecord existing = PersistenceManager.putKeyIfAbsent(record);
+            if (existing == null) {
+                return;
+            }
+        }
+        throw new IllegalStateException("Could not generate a unique key code after " + MAX_GENERATION_ATTEMPTS + " attempts");
+    }
+
     public static RedeemResult redeemKey(ServerPlayer player, String rawCode, boolean bypassConfirm) {
-        return redeemKey(player, rawCode, bypassConfirm, CommandThrottleType.USE, true);
+        return redeemKey(player, rawCode, bypassConfirm, CommandThrottleType.USE, true, null);
     }
 
     public static RedeemResult redeemKey(ServerPlayer player, String rawCode, boolean bypassConfirm, CommandThrottleType throttleType) {
-        return redeemKey(player, rawCode, bypassConfirm, throttleType, true);
+        return redeemKey(player, rawCode, bypassConfirm, throttleType, true, null);
     }
 
-    private static RedeemResult redeemKey(ServerPlayer player, String rawCode, boolean bypassConfirm, CommandThrottleType throttleType, boolean applyCooldown) {
-        String code = EasyVipConfig.common.caseSensitiveKeys ? rawCode.trim() : rawCode.trim().toUpperCase();
-        KeyRecord record = PersistenceManager.getKey(code);
-        if (record == null && !EasyVipConfig.common.caseSensitiveKeys) {
-            // Try exact match fallback
-            record = PersistenceManager.getKey(rawCode.trim());
+    public static RedeemResult redeemPhysicalKey(ServerPlayer player, String rawCode, String instanceId) {
+        return redeemKey(player, rawCode, false, CommandThrottleType.USE, true, instanceId);
+    }
+
+    private static RedeemResult redeemKey(ServerPlayer player, String rawCode, boolean bypassConfirm, CommandThrottleType throttleType, boolean applyCooldown, String physicalInstanceId) {
+        String code = normalizeCode(rawCode);
+        UUID uuid = player.getUUID();
+        String playerName = resolvePlayerName(player.getServer(), uuid);
+
+        if (applyCooldown && isOnCooldown(uuid, throttleType)) {
+            return RedeemResult.ON_COOLDOWN;
         }
 
+        if (EasyVipConfig.common.confirmBeforeUse && !bypassConfirm) {
+            confirmations.put(uuid, new PendingConfirmation(code));
+            return RedeemResult.CONFIRMATION_REQUIRED;
+        }
+
+        Object lock = KEY_LOCKS.computeIfAbsent(code, k -> new Object());
+        synchronized (lock) {
+            KeyRecord record = PersistenceManager.getKey(code);
+            RedeemResult preflight = preflightCheck(record, uuid, physicalInstanceId);
+            if (preflight != null) {
+                return preflight;
+            }
+
+            Map<String, String> ctx = new HashMap<>();
+            ctx.put("player", playerName);
+            ctx.put("player_uuid", uuid.toString());
+
+            boolean success = executeKeyReward(player, record, ctx);
+            if (!success) {
+                return RedeemResult.ERROR;
+            }
+
+            consumeRecord(record, uuid, physicalInstanceId);
+            PersistenceManager.putKey(record);
+            if (applyCooldown) {
+                markCooldown(uuid, throttleType);
+            }
+            confirmations.remove(uuid);
+            PersistenceManager.log(playerName, "redeem_key", "Redeemed key "
+                    + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+            return RedeemResult.SUCCESS;
+        }
+    }
+
+    private static String normalizeCode(String rawCode) {
+        if (rawCode == null) {
+            return "";
+        }
+        if (EasyVipConfig.common.caseSensitiveKeys) {
+            return rawCode.trim();
+        }
+        return rawCode.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static RedeemResult preflightCheck(KeyRecord record, UUID uuid, String physicalInstanceId) {
         if (record == null) {
             return RedeemResult.INVALID_KEY;
         }
-
         if (record.isExpired()) {
             return RedeemResult.EXPIRED;
         }
-
         if (record.isFullyUsed()) {
             return RedeemResult.NO_USES_LEFT;
-        }
-
-        UUID uuid = player.getUUID();
-        if (applyCooldown) {
-            RedeemResult cooldown = checkCooldown(uuid, throttleType);
-            if (cooldown != null) {
-                return cooldown;
-            }
         }
         if (record.getBoundPlayerUuid() != null && !record.getBoundPlayerUuid().equals(uuid)) {
             return RedeemResult.BOUND_TO_OTHER;
         }
 
-        if (record.getUsedBy().contains(uuid)) {
+        boolean isRewardNoConsume = "reward".equalsIgnoreCase(record.getType())
+                && !isRewardConsumeOnUse(record);
+        if (!isRewardNoConsume && record.getUsedBy().contains(uuid)) {
             return RedeemResult.ALREADY_USED;
         }
-
-        // Confirmation check
-        if (EasyVipConfig.common.confirmBeforeUse && !bypassConfirm) {
-            PendingConfirmation pc = confirmations.get(uuid);
-            if (pc == null || !pc.code.equals(code) || pc.isExpired()) {
-                confirmations.put(uuid, new PendingConfirmation(code));
-                return RedeemResult.CONFIRMATION_REQUIRED;
-            }
+        if (physicalInstanceId != null && record.isInstanceConsumed(physicalInstanceId)) {
+            return RedeemResult.ALREADY_USED;
         }
+        return null;
+    }
 
-        // Consume key
-        boolean success = false;
-        Map<String, String> ctx = new HashMap<>();
-        String playerName = resolvePlayerName(player.getServer(), uuid);
-        ctx.put("player", playerName);
-        ctx.put("player_uuid", uuid.toString());
+    private static boolean isRewardConsumeOnUse(KeyRecord record) {
+        EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
+        return rkDef == null || rkDef.consumeOnUse;
+    }
+
+    private static boolean executeKeyReward(ServerPlayer player, KeyRecord record, Map<String, String> ctx) {
+        UUID uuid = player.getUUID();
+        String dimensionId = player.level().dimension().location().toString();
+        String code = record.getCode();
+        String playerName = ctx.getOrDefault("player", uuid.toString());
 
         if (record.getType().equalsIgnoreCase("vip")) {
             EasyVipConfig.VipTierDefinition tierDef = EasyVipConfig.tiers.list.get(record.getTierId());
             String tierDisplay = (tierDef != null) ? tierDef.displayName : record.getTierId();
-
             ctx.put("tier_id", record.getTierId());
             ctx.put("tier_display", tierDisplay);
             ctx.put("duration", record.getDuration());
 
-            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
-                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
-                if (!isDimensionAllowed(player.level().dimension().location().toString(), EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
-                    PersistenceManager.log(playerName, "redeem_key_failed", "VIP dimension blocked for " + code);
-                    return RedeemResult.ERROR;
-                }
+            if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                PersistenceManager.log(playerName, "redeem_key_failed", "VIP dimension blocked for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
-            success = VipService.addVip(player.getServer(), uuid, record.getTierId(), record.getDuration(), playerName);
-        } else if (record.getType().equalsIgnoreCase("reward")) {
+            return VipService.addVip(player.getServer(), uuid, record.getTierId(), record.getDuration(), playerName);
+        }
+
+        if (record.getType().equalsIgnoreCase("reward")) {
             ctx.put("reward_key_id", record.getRewardKeyId());
             EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
             if (rkDef == null) {
-                player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
-                                "&cReward not found or invalid. The key was not consumed.",
-                                "&cRecompensa não encontrada ou inválida. A chave não foi consumida."
-                        ), ctx)
-                ));
-                PersistenceManager.log(playerName, "redeem_key_failed", "Reward definition missing for " + code);
-                return RedeemResult.ERROR;
+                sendNotConsumedMessage(player, "&cReward not found or invalid. The key was not consumed.",
+                        "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx);
+                PersistenceManager.log(playerName, "redeem_key_failed", "Reward definition missing for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
-            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
-                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
-                if (!isDimensionAllowed(player.level().dimension().location().toString(), EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
-                    PersistenceManager.log(playerName, "redeem_key_failed", "Dimension blocked for " + code);
-                    return RedeemResult.ERROR;
-                }
+            if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                PersistenceManager.log(playerName, "redeem_key_failed", "Dimension blocked for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
-            if (!rkDef.allowedDimensions.isEmpty()) {
-                if (!isDimensionAllowed(player.level().dimension().location().toString(), rkDef.allowedDimensions, Collections.emptyList())) {
-                    PersistenceManager.log(playerName, "redeem_key_failed", "Reward dimension blocked for " + code);
-                    return RedeemResult.ERROR;
-                }
+            if (!rkDef.allowedDimensions.isEmpty() && !isDimensionAllowed(dimensionId, rkDef.allowedDimensions, Collections.emptyList())) {
+                PersistenceManager.log(playerName, "redeem_key_failed", "Reward dimension blocked for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
 
             List<Map<String, Object>> actions = record.getActions();
@@ -233,107 +331,91 @@ public final class KeyService {
                 ctx.put("key_display", rkDef.displayName);
             }
             if (actions == null || actions.isEmpty()) {
-                player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
-                                "&cReward not found or invalid. The key was not consumed.",
-                                "&cRecompensa não encontrada ou inválida. A chave não foi consumida."
-                        ), ctx)
-                ));
-                PersistenceManager.log(playerName, "redeem_key_failed", "Reward actions missing for " + code);
-                return RedeemResult.ERROR;
+                sendNotConsumedMessage(player, "&cReward not found or invalid. The key was not consumed.",
+                        "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx);
+                PersistenceManager.log(playerName, "redeem_key_failed", "Reward actions missing for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
 
             Long lastUsed = record.getLastUsedAtBy().get(uuid);
             long cooldownMs = rkDef.cooldownSeconds > 0 ? rkDef.cooldownSeconds * 1000L : 0L;
             if (cooldownMs > 0 && lastUsed != null && System.currentTimeMillis() - lastUsed < cooldownMs) {
-                PersistenceManager.log(playerName, "redeem_key_failed", "Reward cooldown active for " + code);
-                return RedeemResult.ERROR;
+                PersistenceManager.log(playerName, "redeem_key_failed", "Reward cooldown active for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
 
             boolean actionsOk = ActionExecutor.execute(player, actions, ctx);
             if (!actionsOk) {
-                player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
-                                "&cReward not found or invalid. The key was not consumed.",
-                                "&cRecompensa não encontrada ou inválida. A chave não foi consumida."
-                        ), ctx)
-                ));
-                PersistenceManager.log(playerName, "redeem_key_failed", "Reward actions failed for " + code);
-                return RedeemResult.ERROR;
+                sendNotConsumedMessage(player, "&cReward not found or invalid. The key was not consumed.",
+                        "&cRecompensa não encontrada ou inválida. A chave não foi consumida.", ctx);
+                PersistenceManager.log(playerName, "redeem_key_failed", "Reward actions failed for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
-            success = true;
-        } else if (record.getType().equalsIgnoreCase("custom")) {
-            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
-                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
-                if (!isDimensionAllowed(player.level().dimension().location().toString(), EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
-                    PersistenceManager.log(playerName, "redeem_key_failed", "Dimension blocked for " + code);
-                    return RedeemResult.ERROR;
-                }
+            return true;
+        }
+
+        if (record.getType().equalsIgnoreCase("custom")) {
+            if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                PersistenceManager.log(playerName, "redeem_key_failed", "Dimension blocked for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
 
             List<Map<String, Object>> actions = record.getActions();
             if (actions == null || actions.isEmpty()) {
-                player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
-                                "&cCustom actions not found or invalid. The key was not consumed.",
-                                "&cAções customizadas não encontradas ou inválidas. A chave não foi consumida."
-                        ), ctx)
-                ));
-                PersistenceManager.log(playerName, "redeem_key_failed", "Custom actions missing for " + code);
-                return RedeemResult.ERROR;
+                sendNotConsumedMessage(player, "&cCustom actions not found or invalid. The key was not consumed.",
+                        "&cAções customizadas não encontradas ou inválidas. A chave não foi consumida.", ctx);
+                PersistenceManager.log(playerName, "redeem_key_failed", "Custom actions missing for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
 
             boolean actionsOk = ActionExecutor.execute(player, actions, ctx);
             if (!actionsOk) {
-                player.sendSystemMessage(Component.literal(
-                        ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(
-                                "&cError executing custom actions. The key was not consumed.",
-                                "&cErro ao executar ações customizadas. A chave não foi consumida."
-                        ), ctx)
-                ));
-                PersistenceManager.log(playerName, "redeem_key_failed", "Custom actions failed for " + code);
-                return RedeemResult.ERROR;
+                sendNotConsumedMessage(player, "&cError executing custom actions. The key was not consumed.",
+                        "&cErro ao executar ações customizadas. A chave não foi consumida.", ctx);
+                PersistenceManager.log(playerName, "redeem_key_failed", "Custom actions failed for "
+                        + br.com.pedrodalben.easyvip.util.KeySecurity.describeKeyForLog(code));
+                return false;
             }
-            success = true;
+            return true;
         }
 
-        if (success) {
-            if ("reward".equalsIgnoreCase(record.getType())) {
-                EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
-                if (rkDef != null && rkDef.consumeOnUse) {
-                    record.setUsedCount(record.getUsedCount() + 1);
-                    record.getUsedBy().add(uuid);
-                }
-                record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
-            } else {
-                record.setUsedCount(record.getUsedCount() + 1);
-                record.getUsedBy().add(uuid);
-            }
-            PersistenceManager.putKey(record);
-            markCooldown(uuid, throttleType);
-
-            confirmations.remove(uuid);
-            PersistenceManager.log(playerName, "redeem_key", "Redeemed key: " + code);
-            return RedeemResult.SUCCESS;
-        }
-
-        return RedeemResult.ERROR;
+        return false;
     }
 
-    private static RedeemResult checkCooldown(UUID uuid, CommandThrottleType throttleType) {
+    private static void sendNotConsumedMessage(ServerPlayer player, String en, String pt, Map<String, String> ctx) {
+        player.sendSystemMessage(Component.literal(
+                ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + EasyVipConfig.localized(en, pt), ctx)
+        ));
+    }
+
+    private static void consumeRecord(KeyRecord record, UUID uuid, String physicalInstanceId) {
+        if ("reward".equalsIgnoreCase(record.getType()) && !isRewardConsumeOnUse(record)) {
+            record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
+        } else {
+            record.setUsedCount(record.getUsedCount() + 1);
+            record.getUsedBy().add(uuid);
+            record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
+        }
+        if (physicalInstanceId != null) {
+            record.markInstanceConsumed(physicalInstanceId);
+        }
+    }
+
+    private static boolean isOnCooldown(UUID uuid, CommandThrottleType throttleType) {
         long cooldownMs = EasyVipConfig.common.commandCooldownTicks * 50L;
         if (cooldownMs <= 0) {
-            return null;
+            return false;
         }
 
         long now = System.currentTimeMillis();
         Map<CommandThrottleType, Long> byType = commandCooldowns.computeIfAbsent(uuid, k -> new EnumMap<>(CommandThrottleType.class));
         Long lastUsed = byType.get(throttleType);
-        if (lastUsed != null && now - lastUsed < cooldownMs) {
-            return RedeemResult.ON_COOLDOWN;
-        }
-        byType.put(throttleType, now);
-        return null;
+        return lastUsed != null && now - lastUsed < cooldownMs;
     }
 
     private static void markCooldown(UUID uuid, CommandThrottleType throttleType) {
@@ -383,7 +465,7 @@ public final class KeyService {
             confirmations.remove(uuid);
             return RedeemResult.INVALID_KEY;
         }
-        return redeemKey(player, pc.code, true, CommandThrottleType.CONFIRM);
+        return redeemKey(player, pc.code, true, CommandThrottleType.CONFIRM, true, null);
     }
 
     public static ItemStack createPhysicalKeyItem(String keyCode) {
@@ -401,8 +483,24 @@ public final class KeyService {
         CompoundTag tag = new CompoundTag();
         tag.putBoolean(EasyVipConfig.common.itemKeyMarker, true);
         tag.putString("easyvip_key", keyCode);
+        tag.putString("easyvip_key_instance", UUID.randomUUID().toString());
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
         return stack;
+    }
+
+    public static String getPhysicalKeyInstanceId(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return null;
+        }
+        CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
+        if (customData == null || customData.isEmpty()) {
+            return null;
+        }
+        CompoundTag tag = customData.copyTag();
+        if (!tag.contains("easyvip_key_instance")) {
+            return null;
+        }
+        return tag.getString("easyvip_key_instance");
     }
 
     public static boolean isPhysicalKeyItem(ItemStack stack) {
@@ -435,102 +533,106 @@ public final class KeyService {
             return RedeemResult.ERROR;
         }
 
-        if (record.isExpired()) {
-            return RedeemResult.EXPIRED;
-        }
-
-        if (record.isFullyUsed()) {
-            return RedeemResult.NO_USES_LEFT;
-        }
-
-        if (record.getBoundPlayerUuid() != null && !record.getBoundPlayerUuid().equals(uuid)) {
-            return RedeemResult.BOUND_TO_OTHER;
-        }
-
-        if (record.getUsedBy().contains(uuid)) {
-            return RedeemResult.ALREADY_USED;
-        }
-
-        if (applyCooldown) {
-            RedeemResult cooldown = checkCooldown(uuid, CommandThrottleType.USE);
-            if (cooldown != null) {
-                return cooldown;
+        String code = record.getCode();
+        Object lock = KEY_LOCKS.computeIfAbsent(code, k -> new Object());
+        synchronized (lock) {
+            KeyRecord current = PersistenceManager.getKey(code);
+            if (current == null) {
+                return RedeemResult.INVALID_KEY;
             }
-            EasyVipConfig.RewardKeyDefinition rkDefCooldown = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
-            if (rkDefCooldown != null) {
-                Long lastUsed = record.getLastUsedAtBy().get(uuid);
-                long cooldownMs = rkDefCooldown.cooldownSeconds > 0 ? rkDefCooldown.cooldownSeconds * 1000L : 0L;
-                if (cooldownMs > 0 && lastUsed != null && System.currentTimeMillis() - lastUsed < cooldownMs) {
+
+            if (current.isExpired()) {
+                return RedeemResult.EXPIRED;
+            }
+
+            if (current.isFullyUsed()) {
+                return RedeemResult.NO_USES_LEFT;
+            }
+
+            if (current.getBoundPlayerUuid() != null && !current.getBoundPlayerUuid().equals(uuid)) {
+                return RedeemResult.BOUND_TO_OTHER;
+            }
+
+            boolean rewardNoConsume = "reward".equalsIgnoreCase(current.getType())
+                    && !isRewardConsumeOnUse(current);
+            if (!rewardNoConsume && current.getUsedBy().contains(uuid)) {
+                return RedeemResult.ALREADY_USED;
+            }
+
+            if (applyCooldown) {
+                if (isOnCooldown(uuid, CommandThrottleType.USE)) {
                     return RedeemResult.ON_COOLDOWN;
                 }
-            }
-        }
-
-        List<Map<String, Object>> actions = record.getActions();
-        if ("reward".equalsIgnoreCase(record.getType())) {
-            EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(record.getRewardKeyId());
-            if (rkDef == null) {
-                return RedeemResult.ERROR;
-            }
-
-            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
-                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
-                if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
-                    return RedeemResult.ERROR;
-                }
-            }
-            if (!rkDef.allowedDimensions.isEmpty() && !isDimensionAllowed(dimensionId, rkDef.allowedDimensions, Collections.emptyList())) {
-                return RedeemResult.ERROR;
-            }
-
-            if (actions == null || actions.isEmpty()) {
-                actions = rkDef.actions;
-            }
-            if (actions == null || actions.isEmpty()) {
-                return RedeemResult.ERROR;
-            }
-
-            if (actionRunner == null || !Boolean.TRUE.equals(actionRunner.apply(actions))) {
-                return RedeemResult.ERROR;
-            }
-
-            if (rkDef.consumeOnUse) {
-                record.setUsedCount(record.getUsedCount() + 1);
-                record.getUsedBy().add(uuid);
-            }
-            record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
-            PersistenceManager.putKey(record);
-            if (applyCooldown) {
-                markCooldown(uuid, CommandThrottleType.USE);
-            }
-            return RedeemResult.SUCCESS;
-        } else if ("custom".equalsIgnoreCase(record.getType())) {
-            if ((EasyVipConfig.common.allowedDimensions != null && !EasyVipConfig.common.allowedDimensions.isEmpty())
-                    || (EasyVipConfig.common.denyDimensions != null && !EasyVipConfig.common.denyDimensions.isEmpty())) {
-                if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
-                    return RedeemResult.ERROR;
+                EasyVipConfig.RewardKeyDefinition rkDefCooldown = EasyVipConfig.rewardKeys.list.get(current.getRewardKeyId());
+                if (rkDefCooldown != null) {
+                    Long lastUsed = current.getLastUsedAtBy().get(uuid);
+                    long cooldownMs = rkDefCooldown.cooldownSeconds > 0 ? rkDefCooldown.cooldownSeconds * 1000L : 0L;
+                    if (cooldownMs > 0 && lastUsed != null && System.currentTimeMillis() - lastUsed < cooldownMs) {
+                        return RedeemResult.ON_COOLDOWN;
+                    }
                 }
             }
 
-            if (actions == null || actions.isEmpty()) {
-                return RedeemResult.ERROR;
+            List<Map<String, Object>> actions = current.getActions();
+            if ("reward".equalsIgnoreCase(current.getType())) {
+                EasyVipConfig.RewardKeyDefinition rkDef = EasyVipConfig.rewardKeys.list.get(current.getRewardKeyId());
+                if (rkDef == null) {
+                    return RedeemResult.ERROR;
+                }
+
+                if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                    return RedeemResult.ERROR;
+                }
+                if (!rkDef.allowedDimensions.isEmpty() && !isDimensionAllowed(dimensionId, rkDef.allowedDimensions, Collections.emptyList())) {
+                    return RedeemResult.ERROR;
+                }
+
+                if (actions == null || actions.isEmpty()) {
+                    actions = rkDef.actions;
+                }
+                if (actions == null || actions.isEmpty()) {
+                    return RedeemResult.ERROR;
+                }
+
+                if (actionRunner == null || !Boolean.TRUE.equals(actionRunner.apply(actions))) {
+                    return RedeemResult.ERROR;
+                }
+
+                if (rkDef.consumeOnUse) {
+                    current.setUsedCount(current.getUsedCount() + 1);
+                    current.getUsedBy().add(uuid);
+                }
+                current.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
+                PersistenceManager.putKey(current);
+                if (applyCooldown) {
+                    markCooldown(uuid, CommandThrottleType.USE);
+                }
+                return RedeemResult.SUCCESS;
+            } else if ("custom".equalsIgnoreCase(current.getType())) {
+                if (!isDimensionAllowed(dimensionId, EasyVipConfig.common.allowedDimensions, EasyVipConfig.common.denyDimensions)) {
+                    return RedeemResult.ERROR;
+                }
+
+                if (actions == null || actions.isEmpty()) {
+                    return RedeemResult.ERROR;
+                }
+
+                if (actionRunner == null || !Boolean.TRUE.equals(actionRunner.apply(actions))) {
+                    return RedeemResult.ERROR;
+                }
+
+                current.setUsedCount(current.getUsedCount() + 1);
+                current.getUsedBy().add(uuid);
+                current.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
+                PersistenceManager.putKey(current);
+                if (applyCooldown) {
+                    markCooldown(uuid, CommandThrottleType.USE);
+                }
+                return RedeemResult.SUCCESS;
             }
 
-            if (actionRunner == null || !Boolean.TRUE.equals(actionRunner.apply(actions))) {
-                return RedeemResult.ERROR;
-            }
-
-            record.setUsedCount(record.getUsedCount() + 1);
-            record.getUsedBy().add(uuid);
-            record.getLastUsedAtBy().put(uuid, System.currentTimeMillis());
-            PersistenceManager.putKey(record);
-            if (applyCooldown) {
-                markCooldown(uuid, CommandThrottleType.USE);
-            }
-            return RedeemResult.SUCCESS;
+            return RedeemResult.ERROR;
         }
-
-        return RedeemResult.ERROR;
     }
 
     static boolean isPhysicalKeyPayloadValid(String configuredItemId, String actualItemId, boolean markerPresent, boolean hasKeyValue) {

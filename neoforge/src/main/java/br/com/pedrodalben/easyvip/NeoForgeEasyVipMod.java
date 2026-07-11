@@ -10,6 +10,7 @@ import br.com.pedrodalben.easyvip.service.KeyService;
 import br.com.pedrodalben.easyvip.service.PackageService;
 import br.com.pedrodalben.easyvip.service.VipService;
 import br.com.pedrodalben.easyvip.webstore.WebStoreSyncService;
+import br.com.pedrodalben.easyvip.webstore.WebStoreFulfillmentService;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -57,6 +58,7 @@ public final class NeoForgeEasyVipMod {
             PersistenceManager.initialize(configDir);
             WebStoreSyncService.init(configDir);
             ExpirationService.start(server);
+            WebStoreFulfillmentService.start(configDir);
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize EasyVip configuration", e);
         }
@@ -64,6 +66,7 @@ public final class NeoForgeEasyVipMod {
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+        WebStoreFulfillmentService.stop();
         ExpirationService.stop();
         PersistenceManager.shutdown();
     }
@@ -107,10 +110,12 @@ public final class NeoForgeEasyVipMod {
             return;
         }
 
+        String instanceId = KeyService.getPhysicalKeyInstanceId(stack);
+
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);
 
-        KeyService.RedeemResult result = KeyService.redeemKey(player, keyCode, false);
+        KeyService.RedeemResult result = KeyService.redeemPhysicalKey(player, keyCode, instanceId);
         if (result == KeyService.RedeemResult.SUCCESS) {
             stack.shrink(1);
             player.sendSystemMessage(Component.literal("§7[§eEasyVip§7] §aChave usada com sucesso."));

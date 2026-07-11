@@ -16,8 +16,28 @@ public class KeyRecord {
     private Set<UUID> usedBy = new HashSet<>();
     private Map<UUID, Long> lastUsedAtBy = new HashMap<>();
     private List<Map<String, Object>> actions = new ArrayList<>();
+    private Set<String> consumedInstances = new HashSet<>();
 
     public KeyRecord() {
+    }
+
+    public KeyRecord copy() {
+        KeyRecord copy = new KeyRecord();
+        copy.code = this.code;
+        copy.type = this.type;
+        copy.tierId = this.tierId;
+        copy.duration = this.duration;
+        copy.rewardKeyId = this.rewardKeyId;
+        copy.maxUses = this.maxUses;
+        copy.usedCount = this.usedCount;
+        copy.boundPlayerUuid = this.boundPlayerUuid;
+        copy.createdTime = this.createdTime;
+        copy.expiryTime = this.expiryTime;
+        copy.usedBy = new HashSet<>(this.usedBy != null ? this.usedBy : Collections.emptySet());
+        copy.lastUsedAtBy = new HashMap<>(this.lastUsedAtBy != null ? this.lastUsedAtBy : Collections.emptyMap());
+        copy.actions = new ArrayList<>(this.actions != null ? this.actions : Collections.emptyList());
+        copy.consumedInstances = new HashSet<>(this.consumedInstances != null ? this.consumedInstances : Collections.emptySet());
+        return copy;
     }
 
     public String getCode() {
@@ -133,5 +153,27 @@ public class KeyRecord {
 
     public boolean isFullyUsed() {
         return usedCount >= maxUses;
+    }
+
+    public Set<String> getConsumedInstances() {
+        return consumedInstances;
+    }
+
+    public void setConsumedInstances(Set<String> consumedInstances) {
+        this.consumedInstances = consumedInstances;
+    }
+
+    public boolean isInstanceConsumed(String instanceId) {
+        return instanceId != null && consumedInstances != null && consumedInstances.contains(instanceId);
+    }
+
+    public void markInstanceConsumed(String instanceId) {
+        if (instanceId == null || instanceId.isEmpty()) {
+            return;
+        }
+        if (consumedInstances == null) {
+            consumedInstances = new HashSet<>();
+        }
+        consumedInstances.add(instanceId);
     }
 }

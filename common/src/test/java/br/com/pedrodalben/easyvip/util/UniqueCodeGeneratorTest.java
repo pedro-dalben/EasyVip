@@ -23,6 +23,6 @@ class UniqueCodeGeneratorTest {
     @Test
     void failsAfterMaxAttempts() {
         assertThrows(IllegalStateException.class, () ->
-                UniqueCodeGenerator.generate("A", 1, "", candidate -> false, 2));
+                UniqueCodeGenerator.generate("AB", 1, "", candidate -> false, 2));
     }
 }
