@@ -1,9 +1,12 @@
 package br.com.pedrodalben.easyvip.persistence;
 
+import br.com.pedrodalben.easyvip.config.EasyVipConfig;
 import br.com.pedrodalben.easyvip.model.*;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 
 import java.lang.reflect.Type;
 import java.sql.*;
@@ -15,100 +18,157 @@ public final class SqlDatabaseManager {
     private static final Gson GSON = new GsonBuilder().create();
     private static final ReentrantReadWriteLock LOCK = new ReentrantReadWriteLock();
 
-    private static String url;
-    private static String username;
-    private static String password;
+    private static HikariDataSource dataSource;
     private static boolean initialized = false;
 
     private SqlDatabaseManager() {
     }
 
-    public static void initialize(String dbUrl, String dbUsername, String dbPassword) {
-        url = dbUrl;
-        username = dbUsername;
-        password = dbPassword;
-        createTables();
-        initialized = true;
+    public static synchronized void initialize(String dbUrl, String dbUsername, String dbPassword) {
+        if (dataSource != null && !dataSource.isClosed()) {
+            shutdown();
+        }
+
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(dbUrl);
+        if (dbUsername != null && !dbUsername.isEmpty()) {
+            config.setUsername(dbUsername);
+        }
+        if (dbPassword != null && !dbPassword.isEmpty()) {
+            config.setPassword(dbPassword);
+        }
+        config.setPoolName("EasyVip-Pool");
+        int poolSize = Math.max(1, EasyVipConfig.integrations.sqlPoolSize);
+        config.setMaximumPoolSize(poolSize);
+        config.setMinimumIdle(Math.min(poolSize, 2));
+        long timeoutMs = Math.max(1, EasyVipConfig.integrations.sqlConnectionTimeoutSeconds) * 1000L;
+        config.setConnectionTimeout(timeoutMs);
+        config.setIdleTimeout(600000L);
+        config.setMaxLifetime(1800000L);
+
+        config.addDataSourceProperty("useSSL", "false");
+        config.addDataSourceProperty("allowPublicKeyRetrieval", "true");
+        config.addDataSourceProperty("cachePrepStmts", "true");
+        config.addDataSourceProperty("prepStmtCacheSize", "250");
+        config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+
+        try {
+            dataSource = new HikariDataSource(config);
+            createTables();
+            initialized = true;
+        } catch (Exception e) {
+            if (dataSource != null) {
+                try {
+                    dataSource.close();
+                } catch (Exception ignored) {}
+                dataSource = null;
+            }
+            initialized = false;
+            if (e instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException("Failed to initialize SqlDatabaseManager", e);
+        }
     }
 
     public static boolean isInitialized() {
-        return initialized;
+        return initialized && dataSource != null && !dataSource.isClosed();
     }
 
-    public static void shutdown() {
+    public static synchronized void shutdown() {
         initialized = false;
+        if (dataSource != null) {
+            try {
+                dataSource.close();
+            } catch (Exception e) {
+                System.err.println("[EasyVip-SQL] Error closing HikariDataSource: " + e.getMessage());
+            } finally {
+                dataSource = null;
+            }
+        }
     }
 
     private static Connection getConnection() throws SQLException {
-        Properties props = new Properties();
-        props.setProperty("user", username != null ? username : "");
-        props.setProperty("password", password != null ? password : "");
-        props.setProperty("useSSL", "false");
-        props.setProperty("allowPublicKeyRetrieval", "true");
-        return DriverManager.getConnection(url, props);
+        if (dataSource == null || dataSource.isClosed()) {
+            throw new SQLException("SqlDatabaseManager is not initialized or datasource is closed.");
+        }
+        return dataSource.getConnection();
     }
 
     // ─── Table Creation ──────────────────────────────────────
 
     private static void createTables() {
-        try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS easyvip_vips (
-                    player_uuid VARCHAR(36) PRIMARY KEY,
-                    player_name VARCHAR(255) NOT NULL DEFAULT '',
-                    last_observed_active_vip VARCHAR(255) DEFAULT NULL,
-                    vips_data MEDIUMTEXT
-                )
-            """);
+        int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS easyvip_vips (
+                        player_uuid VARCHAR(36) PRIMARY KEY,
+                        player_name VARCHAR(255) NOT NULL DEFAULT '',
+                        last_observed_active_vip VARCHAR(255) DEFAULT NULL,
+                        vips_data MEDIUMTEXT
+                    )
+                """);
 
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS easyvip_keys (
-                    code VARCHAR(255) PRIMARY KEY,
-                    type VARCHAR(50) NOT NULL,
-                    tier_id VARCHAR(255) DEFAULT NULL,
-                    duration VARCHAR(100) DEFAULT NULL,
-                    reward_key_id VARCHAR(255) DEFAULT NULL,
-                    max_uses INT NOT NULL DEFAULT 1,
-                    used_count INT NOT NULL DEFAULT 0,
-                    bound_player_uuid VARCHAR(36) DEFAULT NULL,
-                    created_time BIGINT NOT NULL DEFAULT 0,
-                    expiry_time BIGINT NOT NULL DEFAULT -1,
-                    used_by_json MEDIUMTEXT,
-                    last_used_at_by_json MEDIUMTEXT,
-                    actions_json MEDIUMTEXT
-                )
-            """);
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS easyvip_keys (
+                        code VARCHAR(255) PRIMARY KEY,
+                        type VARCHAR(50) NOT NULL,
+                        tier_id VARCHAR(255) DEFAULT NULL,
+                        duration VARCHAR(100) DEFAULT NULL,
+                        reward_key_id VARCHAR(255) DEFAULT NULL,
+                        max_uses INT NOT NULL DEFAULT 1,
+                        used_count INT NOT NULL DEFAULT 0,
+                        bound_player_uuid VARCHAR(36) DEFAULT NULL,
+                        created_time BIGINT NOT NULL DEFAULT 0,
+                        expiry_time BIGINT NOT NULL DEFAULT -1,
+                        used_by_json MEDIUMTEXT,
+                        last_used_at_by_json MEDIUMTEXT,
+                        actions_json MEDIUMTEXT
+                    )
+                """);
 
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS easyvip_pending_variants (
-                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    player_uuid VARCHAR(36) NOT NULL,
-                    package_id VARCHAR(255) NOT NULL,
-                    variants_json TEXT,
-                    timestamp BIGINT NOT NULL DEFAULT 0
-                )
-            """);
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS easyvip_pending_variants (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        player_uuid VARCHAR(36) NOT NULL,
+                        package_id VARCHAR(255) NOT NULL,
+                        variants_json TEXT,
+                        timestamp BIGINT NOT NULL DEFAULT 0
+                    )
+                """);
 
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS easyvip_package_usage (
-                    player_uuid VARCHAR(36) NOT NULL,
-                    package_id VARCHAR(255) NOT NULL,
-                    usage_count BIGINT NOT NULL DEFAULT 0,
-                    PRIMARY KEY (player_uuid, package_id)
-                )
-            """);
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS easyvip_package_usage (
+                        player_uuid VARCHAR(36) NOT NULL,
+                        package_id VARCHAR(255) NOT NULL,
+                        usage_count BIGINT NOT NULL DEFAULT 0,
+                        PRIMARY KEY (player_uuid, package_id)
+                    )
+                """);
 
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS easyvip_audit_logs (
-                    id VARCHAR(36) PRIMARY KEY,
-                    timestamp BIGINT NOT NULL DEFAULT 0,
-                    operator VARCHAR(255) DEFAULT NULL,
-                    action VARCHAR(255) DEFAULT NULL,
-                    details TEXT
-                )
-            """);
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to create database tables", e);
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS easyvip_audit_logs (
+                        id VARCHAR(36) PRIMARY KEY,
+                        timestamp BIGINT NOT NULL DEFAULT 0,
+                        operator VARCHAR(255) DEFAULT NULL,
+                        action VARCHAR(255) DEFAULT NULL,
+                        details TEXT
+                    )
+                """);
+                break;
+            } catch (SQLException e) {
+                if (attempt == maxRetries) {
+                    throw new RuntimeException("Failed to create database tables after " + maxRetries + " attempts", e);
+                }
+                System.err.println("[EasyVip-SQL] Table creation attempt " + attempt + " failed (" + e.getMessage() + "). Retrying in " + (attempt * 2) + " seconds...");
+                try {
+                    Thread.sleep(attempt * 2000L);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Interrupted while waiting to retry table creation", e);
+                }
+            }
         }
     }
 

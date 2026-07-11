@@ -998,6 +998,8 @@ public final class EasyVipConfig {
         public String sqlUrl = "jdbc:mysql://localhost:3306/easyvip";
         public String sqlUsername = "";
         public String sqlPassword = "";
+        public int sqlPoolSize = 10;
+        public int sqlConnectionTimeoutSeconds = 10;
     }
 
     private static void loadIntegrations() throws IllegalArgumentException, IOException {
@@ -1014,6 +1016,8 @@ public final class EasyVipConfig {
             map.put("sql_url", integrations.sqlUrl);
             map.put("sql_username", integrations.sqlUsername);
             map.put("sql_password", integrations.sqlPassword);
+            map.put("sql_pool_size", integrations.sqlPoolSize);
+            map.put("sql_connection_timeout_seconds", integrations.sqlConnectionTimeoutSeconds);
             TomlWriter.writeFile(file, map);
         }
 
@@ -1028,6 +1032,8 @@ public final class EasyVipConfig {
         integrations.sqlUrl = getString(data, "sql_url", integrations.sqlUrl);
         integrations.sqlUsername = getString(data, "sql_username", "");
         integrations.sqlPassword = getString(data, "sql_password", "");
+        integrations.sqlPoolSize = getInt(data, "sql_pool_size", 10);
+        integrations.sqlConnectionTimeoutSeconds = getInt(data, "sql_connection_timeout_seconds", 10);
     }
 
     private static void loadWebStore() throws IllegalArgumentException, IOException {

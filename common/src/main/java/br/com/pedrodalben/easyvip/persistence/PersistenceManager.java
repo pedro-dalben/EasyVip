@@ -61,6 +61,22 @@ public final class PersistenceManager {
         loadAll();
     }
 
+    public static void reload() {
+        if (EasyVipConfig.integrations.sqlEnabled) {
+            sqlMode = true;
+            SqlDatabaseManager.initialize(
+                EasyVipConfig.integrations.sqlUrl,
+                EasyVipConfig.integrations.sqlUsername,
+                EasyVipConfig.integrations.sqlPassword
+            );
+            System.out.println("[EasyVip] SQL persistence reloaded: " + EasyVipConfig.integrations.sqlUrl);
+        } else if (sqlMode) {
+            SqlDatabaseManager.shutdown();
+            sqlMode = false;
+            loadAll();
+        }
+    }
+
     public static void shutdown() {
         if (sqlMode) {
             SqlDatabaseManager.shutdown();
