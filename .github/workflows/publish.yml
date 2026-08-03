@@ -68,10 +68,10 @@ jobs:
 
       - name: Renomear JAR Fabric
         run: |
+          shopt -s extglob
           for f in fabric/build/libs/!(*-@(dev|sources|javadoc)).jar; do
-            cp "$f" "fabric/build/libs/$(basename "$f" .jar)-fabric.jar"
+            cp "$f" "${f%.jar}-fabric.jar"
           done
-        shell: bash
 
       - name: Publicar Fabric
         uses: Kira-NT/mc-publish@v3
