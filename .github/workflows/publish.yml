@@ -37,20 +37,17 @@ jobs:
       - name: Testar e compilar
         run: ./gradlew clean build
 
-      - name: Publicar no CurseForge, Modrinth e GitHub
+      - name: Publicar NeoForge
         uses: Kira-NT/mc-publish@v3
         with:
-          files-primary: neoforge/build/libs/!(*-@(dev|sources|javadoc)).jar
-          files-secondary: fabric/build/libs/!(*-@(dev|sources|javadoc)).jar
+          files: neoforge/build/libs/!(*-@(dev|sources|javadoc)).jar
 
           name: "${{ github.event.repository.name }} ${{ github.ref_name }}"
           version: "${{ github.ref_name }}"
 
           changelog-file: RELEASE_NOTES.md
 
-          loaders: |
-            neoforge
-            fabric
+          loaders: neoforge
           game-versions: "1.21.1"
           game-version-filter: none
           java: "21"
@@ -68,3 +65,29 @@ jobs:
 
           retry-attempts: 3
           fail-mode: fail
+
+      - name: Publicar Fabric
+        uses: Kira-NT/mc-publish@v3
+        with:
+          files: fabric/build/libs/!(*-@(dev|sources|javadoc)).jar
+
+          name: "${{ github.event.repository.name }} ${{ github.ref_name }}"
+          version: "${{ github.ref_name }}"
+
+          changelog-file: RELEASE_NOTES.md
+
+          loaders: fabric
+          game-versions: "1.21.1"
+          game-version-filter: none
+          java: "21"
+
+          environment: server
+
+          modrinth-id: gjMD4spb
+          modrinth-token: "${{ secrets.MODRINTH_TOKEN }}"
+
+          curseforge-id: "1638114"
+          curseforge-token: "${{ secrets.CURSEFORGE_TOKEN }}"
+
+          retry-attempts: 3
+          fail-mode: skip
