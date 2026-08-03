@@ -16,6 +16,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -36,6 +37,20 @@ public final class VipService {
     }
 
     public static boolean addVip(MinecraftServer server, UUID uuid, String tierId, String durationStr, String operator) {
+        return addVip(server, uuid, null, tierId, durationStr, operator, false);
+    }
+
+    public static boolean addFakePlayerVip(MinecraftServer server, String playerName, String tierId, String durationStr, String operator) {
+        if (playerName == null || playerName.isBlank()) {
+            return false;
+        }
+        UUID uuid = UUID.nameUUIDFromBytes(("bigbang-fake-player:" + playerName.toLowerCase(Locale.ROOT))
+                .getBytes(StandardCharsets.UTF_8));
+        return addVip(server, uuid, playerName, tierId, durationStr, operator, true);
+    }
+
+    private static boolean addVip(MinecraftServer server, UUID uuid, String knownPlayerName, String tierId,
+                                  String durationStr, String operator, boolean activateWhileOffline) {
         EasyVipConfig.VipTierDefinition tierDef = EasyVipConfig.tiers.list.get(tierId);
         if (tierDef == null) {
             return false;
@@ -52,7 +67,7 @@ public final class VipService {
         PlayerVipRecord record = registry.getVips().get(tierId);
         ServerPlayer player = getOnlinePlayer(server, uuid);
         boolean isOnline = player != null;
-        String targetName = resolvePlayerName(server, uuid);
+        String targetName = knownPlayerName != null ? knownPlayerName : resolvePlayerName(server, uuid);
         if (isOnline) {
             targetName = player.getGameProfile().getName();
         }
@@ -71,7 +86,7 @@ public final class VipService {
             registry.getVips().put(tierId, record);
 
             enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, expiry);
-            if (isOnline) {
+            if (isOnline || activateWhileOffline) {
                 executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_activate", tierDef.messages.activated);
                 broadcastVipActivation(server, targetName, tierDef.displayName);
             } else {
@@ -85,7 +100,7 @@ public final class VipService {
                     record.setExpiryTime(expiry);
                     record.setStartTime(now);
                     enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, expiry);
-                    if (isOnline) {
+                    if (isOnline || activateWhileOffline) {
                         executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_replace", tierDef.messages.activated);
                         broadcastVipActivation(server, targetName, tierDef.displayName);
                     } else {
@@ -99,7 +114,7 @@ public final class VipService {
                 if (record.getExpiryTime() == -1) {
                     // Already permanent
                     enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, record.getExpiryTime());
-                    if (isOnline) {
+                    if (isOnline || activateWhileOffline) {
                         executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_stack_perm", EasyVipConfig.messages.vipExtended);
                     } else {
                         record.setPendingActivateActions(true);
@@ -108,7 +123,7 @@ public final class VipService {
                     // Upgrading to permanent
                     record.setExpiryTime(-1);
                     enrichVipContext(ctx, uuid, targetName, tierDef, duration, now, record.getExpiryTime());
-                    if (isOnline) {
+                    if (isOnline || activateWhileOffline) {
                         executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_upgrade_perm", EasyVipConfig.messages.vipExtended);
                     } else {
                         record.setPendingActivateActions(true);
@@ -130,7 +145,7 @@ public final class VipService {
                     ctx.put("duration", DurationParser.formatDuration(addedDuration));
                     record.setExpiryTime(newExpiry);
                     enrichVipContext(ctx, uuid, targetName, tierDef, addedDuration, now, newExpiry);
-                    if (isOnline) {
+                    if (isOnline || activateWhileOffline) {
                         executeVipActivationFlow(server, uuid, player, targetName, tierDef, ctx, "vip_extend", EasyVipConfig.messages.vipExtended);
                     } else {
                         record.setPendingActivateActions(true);
@@ -139,8 +154,18 @@ public final class VipService {
             }
         }
 
+        if (activateWhileOffline) {
+            record.setPendingActivateActions(false);
+        }
         registry.setPlayerName(targetName);
         evaluateActiveVip(server, uuid, registry);
+        if (activateWhileOffline) {
+            registry.setLastObservedActiveVip(registry.getVips().values().stream()
+                    .filter(PlayerVipRecord::isActive)
+                    .map(PlayerVipRecord::getTierId)
+                    .findFirst()
+                    .orElse(null));
+        }
         PersistenceManager.updatePlayerVips(uuid, registry);
 
         PersistenceManager.log(operator, "add_vip", "VIP tier " + tierId + " added to " + targetName + " with duration " + durationStr);
@@ -167,7 +192,7 @@ public final class VipService {
     private static void executeVipActivationFlow(MinecraftServer server, UUID uuid, ServerPlayer player, String playerName,
                                                  EasyVipConfig.VipTierDefinition tierDef, Map<String, String> ctx,
                                                  String source, String messageTemplate) {
-        if (tierDef == null || player == null) {
+        if (tierDef == null) {
             return;
         }
 
@@ -179,13 +204,15 @@ public final class VipService {
             executeServerCommandList(server, uuid, player, playerName, tierDef.commands.activate, ctx, source + "_commands");
         }
 
-        if (messageTemplate != null && !messageTemplate.isEmpty()) {
+        if (player != null && messageTemplate != null && !messageTemplate.isEmpty()) {
             player.sendSystemMessage(Component.literal(
                     ActionExecutor.resolvePlaceholders(EasyVipConfig.messages.prefix + messageTemplate, ctx)
             ));
         }
 
-        executeActivationItems(server, player, tierDef, ctx, source);
+        if (player != null) {
+            executeActivationItems(server, player, tierDef, ctx, source);
+        }
     }
 
     private static void executeVipExpireFlow(MinecraftServer server, UUID uuid, ServerPlayer player, String playerName,
@@ -701,6 +728,10 @@ public final class VipService {
             } catch (Exception ignored) {
             }
         }
+        PlayerVipRegistry registry = PersistenceManager.getPlayerVips(uuid);
+        if (registry != null && registry.getPlayerName() != null && !registry.getPlayerName().isBlank()) {
+            return registry.getPlayerName();
+        }
         return uuid.toString();
     }
 
@@ -733,7 +764,7 @@ public final class VipService {
             lpAction.put("group", tierDef.id);
             actions.add(lpAction);
         }
-        executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, actions, ctx, source);
+        executeTierActions(server, uuid, ctx.getOrDefault("player", resolvePlayerName(server, uuid)), player, actions, ctx, source);
     }
 
     private static void executeUnsetActiveActions(MinecraftServer server, UUID uuid, ServerPlayer player, String tierId, EasyVipConfig.VipTierDefinition tierDef, Map<String, String> ctx, String source) {
@@ -753,7 +784,7 @@ public final class VipService {
             lpAction.put("group", tierId);
             actions.add(lpAction);
         }
-        executeTierActions(server, uuid, resolvePlayerName(server, uuid), player, actions, ctx, source);
+        executeTierActions(server, uuid, ctx.getOrDefault("player", resolvePlayerName(server, uuid)), player, actions, ctx, source);
     }
 
     private static boolean executeTierActions(MinecraftServer server, UUID uuid, String playerName, ServerPlayer onlinePlayer,

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.MockedStatic;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -153,6 +155,53 @@ class VipServiceCorrectionsTest {
             VipService.evaluateActiveVip(null, uuid, registry);
             assertEquals("vip_plus", registry.getLastObservedActiveVip());
             mockedExecutor.verify(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap()), never());
+        }
+    }
+
+    @Test
+    void fakePlayerVipUsesBigBangFakePlayersIdentityAndActivatesImmediately() {
+        EasyVipConfig.VipTierDefinition tier = tier("vip_fake", 10,
+                List.of(action("run_server_command", Map.of("command", "lp user {player} parent add vip_fake"))),
+                List.of(), List.of());
+        EasyVipConfig.tiers.list.put(tier.id, tier);
+
+        try (MockedStatic<ActionExecutor> mocked = mockStatic(ActionExecutor.class)) {
+            mocked.when(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap())).thenReturn(true);
+
+            assertTrue(VipService.addFakePlayerVip(null, "LunaCraft", "vip_fake", "30d", "Console"));
+
+            UUID uuid = UUID.nameUUIDFromBytes("bigbang-fake-player:lunacraft".getBytes(StandardCharsets.UTF_8));
+            PlayerVipRegistry registry = PersistenceManager.getPlayerVips(uuid);
+            assertNotNull(registry);
+            assertEquals("LunaCraft", registry.getPlayerName());
+            assertFalse(registry.getVips().get("vip_fake").isPendingActivateActions());
+            assertEquals("vip_fake", registry.getLastObservedActiveVip());
+            mocked.verify(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap()), atLeastOnce());
+        }
+    }
+
+    @Test
+    void fakePlayerVipExpiresUsingItsConfiguredName() {
+        UUID uuid = UUID.nameUUIDFromBytes("bigbang-fake-player:lunacraft".getBytes(StandardCharsets.UTF_8));
+        EasyVipConfig.VipTierDefinition tier = tier("vip_fake", 10, List.of(),
+                List.of(action("run_server_command", Map.of("command", "lp user {player} parent remove vip_fake"))), List.of());
+        EasyVipConfig.tiers.list.put(tier.id, tier);
+        PlayerVipRegistry registry = new PlayerVipRegistry(uuid);
+        registry.setPlayerName("LunaCraft");
+        registry.getVips().put(tier.id, new PlayerVipRecord(tier.id, System.currentTimeMillis() - 2_000L,
+                System.currentTimeMillis() - 1_000L, true, false));
+        PersistenceManager.updatePlayerVips(uuid, registry);
+
+        AtomicReference<String> actionPlayerName = new AtomicReference<>();
+        try (MockedStatic<ActionExecutor> mocked = mockStatic(ActionExecutor.class)) {
+            mocked.when(() -> ActionExecutor.execute(any(ActionContext.class), anyList(), anyMap()))
+                    .thenAnswer(invocation -> {
+                        actionPlayerName.set(invocation.getArgument(0, ActionContext.class).getPlayerName());
+                        return true;
+                    });
+
+            assertEquals(1, VipService.expireDueVipsForPlayer(null, uuid));
+            assertEquals("LunaCraft", actionPlayerName.get());
         }
     }
 

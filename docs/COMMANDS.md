@@ -33,6 +33,7 @@
 
 - `/easyvip createvip <id> <display_name> [color]`
 - `/easyvip admin addvip <player> <tier> <duration>`
+- `/easyvip admin addfakevip <fake_player> <tier> <duration>` (BigBangFakePlayers)
 - `/easyvip admin removevip <player> <tier>`
 - `/easyvip savevipactivation <tier>`
 - `/easyvip admin generate vip <tier> <duration> [max_uses] [bound_player]`

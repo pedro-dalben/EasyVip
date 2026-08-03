@@ -229,7 +229,9 @@ public final class EasyVipConfig {
         public String keyAlreadyUsed = "&cEsta chave já foi usada.";
         public String keyBoundToOtherPlayer = "&cEsta chave está vinculada a outro jogador.";
         public String keyConfirmRequired = "&eEsta chave ativará o VIP {tier_display} por {duration}. Digite /easyvip confirm para confirmar.";
+        public String keyRewardConfirmRequired = "&eEsta chave entregará o pacote de benefícios {reward_display}. Digite /easyvip confirm para confirmar.";
         public String keyConfirmed = "&aChave confirmada com sucesso!";
+        public String rewardGiven = "&aPacote de benefícios {reward_display} entregue com sucesso!";
         public String vipActivated = "&aVIP {tier_display} ativado por {duration}!";
         public String vipExtended = "&aVIP {tier_display} estendido por mais {duration}!";
         public String vipSet = "&aVIP {tier_display} definido para {player} por {duration}!";
@@ -271,7 +273,9 @@ public final class EasyVipConfig {
             map.put("key_already_used", messages.keyAlreadyUsed);
             map.put("key_bound_to_other_player", messages.keyBoundToOtherPlayer);
             map.put("key_confirm_required", messages.keyConfirmRequired);
+            map.put("key_reward_confirm_required", messages.keyRewardConfirmRequired);
             map.put("key_confirmed", messages.keyConfirmed);
+            map.put("reward_given", messages.rewardGiven);
             map.put("vip_activated", messages.vipActivated);
             map.put("vip_extended", messages.vipExtended);
             map.put("vip_set", messages.vipSet);
@@ -310,7 +314,9 @@ public final class EasyVipConfig {
         messages.keyAlreadyUsed = getString(data, "key_already_used", messages.keyAlreadyUsed);
         messages.keyBoundToOtherPlayer = getString(data, "key_bound_to_other_player", messages.keyBoundToOtherPlayer);
         messages.keyConfirmRequired = getString(data, "key_confirm_required", messages.keyConfirmRequired);
+        messages.keyRewardConfirmRequired = getString(data, "key_reward_confirm_required", messages.keyRewardConfirmRequired);
         messages.keyConfirmed = getString(data, "key_confirmed", messages.keyConfirmed);
+        messages.rewardGiven = getString(data, "reward_given", messages.rewardGiven);
         messages.vipActivated = getString(data, "vip_activated", messages.vipActivated);
         messages.vipExtended = getString(data, "vip_extended", messages.vipExtended);
         messages.vipSet = getString(data, "vip_set", messages.vipSet);
@@ -1415,7 +1421,9 @@ public final class EasyVipConfig {
         messages.keyAlreadyUsed = "&cThis key has already been used.";
         messages.keyBoundToOtherPlayer = "&cThis key is bound to another player.";
         messages.keyConfirmRequired = "&eThis key will activate VIP {tier_display} for {duration}. Type /easyvip confirm to confirm.";
+        messages.keyRewardConfirmRequired = "&eThis key will deliver the benefits package {reward_display}. Type /easyvip confirm to confirm.";
         messages.keyConfirmed = "&aKey confirmed successfully!";
+        messages.rewardGiven = "&aBenefits package {reward_display} delivered successfully!";
         messages.vipActivated = "&aVIP {tier_display} activated for {duration}!";
         messages.vipExtended = "&aVIP {tier_display} extended by {duration}!";
         messages.vipSet = "&aVIP {tier_display} set for {player} for {duration}!";
@@ -1453,7 +1461,9 @@ public final class EasyVipConfig {
         messages.keyAlreadyUsed = "&cEsta chave já foi usada.";
         messages.keyBoundToOtherPlayer = "&cEsta chave está vinculada a outro jogador.";
         messages.keyConfirmRequired = "&eEsta chave ativará o VIP {tier_display} por {duration}. Digite /easyvip confirm para confirmar.";
+        messages.keyRewardConfirmRequired = "&eEsta chave entregará o pacote de benefícios {reward_display}. Digite /easyvip confirm para confirmar.";
         messages.keyConfirmed = "&aChave confirmada com sucesso!";
+        messages.rewardGiven = "&aPacote de benefícios {reward_display} entregue com sucesso!";
         messages.vipActivated = "&aVocê ativou o VIP {tier_display} por {duration}.";
         messages.vipExtended = "&aVIP {tier_display} estendido por mais {duration}!";
         messages.vipSet = "&aVIP {tier_display} definido para {player} por {duration}!";

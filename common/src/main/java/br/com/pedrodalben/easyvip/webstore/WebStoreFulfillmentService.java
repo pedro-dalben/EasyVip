@@ -17,6 +17,8 @@ import com.google.gson.JsonParser;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -73,6 +75,7 @@ public final class WebStoreFulfillmentService {
     private static volatile int lastClaimCount;
     private static volatile int lastProcessedCount;
     private static volatile String lastFulfillmentId;
+    private static volatile boolean emptyPollLogged;
 
     private WebStoreFulfillmentService() {
     }
@@ -185,6 +188,7 @@ public final class WebStoreFulfillmentService {
         try {
             Files.createDirectories(dataDir);
             logFile = dataDir.resolve("webstore_fulfillment.log");
+            emptyPollLogged = false;
         } catch (IOException e) {
             System.err.println("[EasyVip-Fulfillment] Failed to initialize log file: " + e.getMessage());
         }
@@ -254,11 +258,15 @@ public final class WebStoreFulfillmentService {
                 lastState = "empty";
                 lastEmptyAt = System.currentTimeMillis();
                 consecutiveFailures = 0;
-                log("EMPTY | " + serverLogPrefix() + "no fulfillments");
+                if (!emptyPollLogged) {
+                    log("EMPTY | " + serverLogPrefix() + "no fulfillments");
+                    emptyPollLogged = true;
+                }
                 scheduleNext(EasyVipConfig.fulfillment.pollIntervalSeconds * 1000L);
                 return;
             }
 
+            emptyPollLogged = false;
             boolean sawTransient = false;
             int processed = 0;
             for (ClaimFulfillment fulfillment : claim.fulfillments) {
@@ -359,7 +367,12 @@ public final class WebStoreFulfillmentService {
             return FulfillmentOutcome.processed();
         } catch (RuntimeException e) {
             lastErrorCode = "processing_exception";
-            log("ERROR | " + serverLogPrefix() + "fulfillment_id=" + claim.fulfillmentId + " | " + e.getClass().getSimpleName());
+            logException("ERROR | " + serverLogPrefix() + "fulfillment_id=" + claim.fulfillmentId
+                    + " | " + e.getClass().getSimpleName(), e);
+            if (e instanceof IllegalArgumentException) {
+                failFulfillment(claim.fulfillmentId, claim.claimToken, "processing_exception", exceptionMessage(e));
+                return FulfillmentOutcome.definitiveFailure("processing_exception");
+            }
             return FulfillmentOutcome.transientError("processing_exception");
         }
     }
@@ -440,6 +453,18 @@ public final class WebStoreFulfillmentService {
                     SqlDatabaseManager.upsertWebStoreFulfillment(conn, ledger);
                     conn.commit();
                     return FulfillmentLedger.invalidConfig(ledger, productError, "invalid product");
+                }
+
+                String bindingError = validatePlayerBinding(product, claim.minecraftUuid);
+                if (bindingError != null) {
+                    String message = bindingError + ": minecraft_uuid is required when bind_to_player=true";
+                    ledger.setStatus("invalid_config");
+                    ledger.setFailureCode("processing_exception");
+                    ledger.setErrorMessage(message);
+                    ledger.setUpdatedAt(now);
+                    SqlDatabaseManager.upsertWebStoreFulfillment(conn, ledger);
+                    conn.commit();
+                    return FulfillmentLedger.invalidConfig(ledger, "processing_exception", message);
                 }
 
                 FulfillmentItemRecord existingItem = findItemByLineId(conn, item.lineItemId);
@@ -653,6 +678,21 @@ public final class WebStoreFulfillmentService {
                 return "invalid_kind";
         }
         return null;
+    }
+
+    private static String validatePlayerBinding(FulfillmentProductConfig product, String minecraftUuid) {
+        if (!product.bindToPlayer) {
+            return null;
+        }
+        if (minecraftUuid == null || minecraftUuid.isBlank()) {
+            return "missing_minecraft_uuid";
+        }
+        try {
+            UUID.fromString(minecraftUuid);
+            return null;
+        } catch (IllegalArgumentException e) {
+            return "invalid_minecraft_uuid";
+        }
     }
 
     private static KeyRecord generateKeyRecordForProduct(FulfillmentProductConfig product, String minecraftUuid, long now) {
@@ -1224,6 +1264,17 @@ public final class WebStoreFulfillmentService {
         if (EasyVipConfig.common.debug) {
             System.out.println("[EasyVip-Fulfillment] " + message);
         }
+    }
+
+    private static void logException(String message, Throwable error) {
+        StringWriter details = new StringWriter();
+        error.printStackTrace(new PrintWriter(details));
+        log(message + System.lineSeparator() + details);
+    }
+
+    private static String exceptionMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 
     private static String serverLogPrefix() {

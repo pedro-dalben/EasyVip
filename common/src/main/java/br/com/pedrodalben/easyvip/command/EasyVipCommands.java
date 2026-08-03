@@ -156,6 +156,14 @@ public final class EasyVipCommands {
                                 .then(Commands.argument("duration", StringArgumentType.string())
                                         .executes(EasyVipCommands::executeAddVip)))));
 
+        // /easyvip admin addfakevip <fake_player> <tier> <duration>
+        admin.then(Commands.literal("addfakevip")
+                .then(Commands.argument("fake_player", StringArgumentType.word())
+                        .then(Commands.argument("tier", StringArgumentType.word())
+                                .suggests(suggestTiers())
+                                .then(Commands.argument("duration", StringArgumentType.string())
+                                        .executes(EasyVipCommands::executeAddFakeVip)))));
+
         // /easyvip admin removevip <player> <tier>
         admin.then(Commands.literal("removevip")
                 .then(Commands.argument("player", GameProfileArgument.gameProfile())
@@ -260,6 +268,8 @@ public final class EasyVipCommands {
                                 .executes(ctx -> executeKeyInfo(ctx, true)))));
         key.then(Commands.literal("delete")
                 .then(Commands.argument("code", StringArgumentType.word()).executes(EasyVipCommands::executeKeyDelete)));
+        key.then(Commands.literal("cleanup")
+                .executes(EasyVipCommands::executeKeyCleanup));
         admin.then(key);
 
         // /easyvip package ...
@@ -483,7 +493,17 @@ public final class EasyVipCommands {
         String msg;
         switch (result) {
             case SUCCESS:
-                msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyConfirmed;
+                KeyRecord successRecord = PersistenceManager.getKey(key.trim().toUpperCase());
+                if (successRecord == null) successRecord = PersistenceManager.getKey(key.trim());
+                if (successRecord != null && "reward".equalsIgnoreCase(successRecord.getType())) {
+                    var rewardDef = EasyVipConfig.rewardKeys.list.get(successRecord.getRewardKeyId());
+                    Map<String, String> rewardContext = new HashMap<>();
+                    rewardContext.put("reward_display", rewardDef != null ? rewardDef.displayName : successRecord.getRewardKeyId());
+                    msg = EasyVipConfig.messages.prefix + ActionExecutor.resolvePlaceholders(
+                            EasyVipConfig.messages.rewardGiven, rewardContext);
+                } else {
+                    msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyConfirmed;
+                }
                 break;
             case INVALID_KEY:
                 msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidKey;
@@ -508,24 +528,30 @@ public final class EasyVipCommands {
                 if (rec == null) rec = PersistenceManager.getKey(key.trim());
                 String tierDisplay = "";
                 String duration = "";
+                String rewardDisplay = "";
+                boolean benefitKey = false;
                 if (rec != null) {
                     if (rec.getType().equalsIgnoreCase("vip")) {
                         var tierDef = EasyVipConfig.tiers.list.get(rec.getTierId());
                         tierDisplay = (tierDef != null) ? tierDef.displayName : rec.getTierId();
                         duration = rec.getDuration();
                     } else if (rec.getType().equalsIgnoreCase("custom")) {
-                        tierDisplay = EasyVipConfig.localized("Custom Reward", "Recompensa Personalizada");
-                        duration = EasyVipConfig.localized("one-time use", "uso único");
+                        rewardDisplay = EasyVipConfig.localized("Custom Reward", "Recompensa Personalizada");
+                        benefitKey = true;
                     } else {
                         var rkDef = EasyVipConfig.rewardKeys.list.get(rec.getRewardKeyId());
-                        tierDisplay = (rkDef != null) ? rkDef.displayName : (rec.getRewardKeyId() != null ? rec.getRewardKeyId() : EasyVipConfig.localized("Reward", "Recompensa"));
-                        duration = EasyVipConfig.localized("reward", "recompensa");
+                        rewardDisplay = (rkDef != null) ? rkDef.displayName : (rec.getRewardKeyId() != null ? rec.getRewardKeyId() : EasyVipConfig.localized("Reward", "Recompensa"));
+                        benefitKey = true;
                     }
                 }
                 Map<String, String> context = new HashMap<>();
                 context.put("tier_display", tierDisplay);
                 context.put("duration", duration);
-                msg = EasyVipConfig.messages.prefix + EasyVipConfig.messages.keyConfirmRequired;
+                context.put("reward_display", rewardDisplay);
+                String template = benefitKey
+                        ? EasyVipConfig.messages.keyRewardConfirmRequired
+                        : EasyVipConfig.messages.keyConfirmRequired;
+                msg = EasyVipConfig.messages.prefix + template;
                 player.sendSystemMessage(Component.literal(ActionExecutor.resolvePlaceholders(msg, context)));
                 return;
             }
@@ -846,6 +872,44 @@ public final class EasyVipCommands {
             )));
             return 0;
         }
+    }
+
+    private static int executeAddFakeVip(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String playerName = StringArgumentType.getString(ctx, "fake_player");
+        String tier = StringArgumentType.getString(ctx, "tier");
+        String duration = StringArgumentType.getString(ctx, "duration");
+        if (!EasyVipConfig.tiers.list.containsKey(tier)) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidTier));
+            return 0;
+        }
+        try {
+            long parsedDuration = DurationParser.parseDurationMillis(duration);
+            if (parsedDuration == 0 || (parsedDuration < 0 && parsedDuration != -1)) {
+                throw new IllegalArgumentException("invalid duration");
+            }
+        } catch (Exception ignored) {
+            src.sendFailure(Component.literal(EasyVipConfig.messages.prefix + EasyVipConfig.messages.invalidDuration));
+            return 0;
+        }
+
+        boolean success = VipService.addFakePlayerVip(src.getServer(), playerName, tier, duration, operatorName(src));
+        if (!success) {
+            src.sendFailure(Component.literal("§c" + EasyVipConfig.localized(
+                    "Error adding VIP. Check that the tier exists or that stacking rules do not block the operation.",
+                    "Erro ao adicionar VIP. Verifique se o tier existe ou se as regras de stacking bloqueiam a operação."
+            )));
+            return 0;
+        }
+
+        EasyVipConfig.VipTierDefinition definition = EasyVipConfig.tiers.list.get(tier);
+        Map<String, String> context = new HashMap<>();
+        context.put("tier_display", definition != null ? definition.displayName : tier);
+        context.put("player", playerName);
+        context.put("duration", duration);
+        src.sendSuccess(() -> Component.literal(ActionExecutor.resolvePlaceholders(
+                EasyVipConfig.messages.prefix + EasyVipConfig.messages.vipSet, context)), true);
+        return 1;
     }
 
     private static int executeRemoveVip(CommandContext<CommandSourceStack> ctx) {
@@ -1209,6 +1273,21 @@ public final class EasyVipCommands {
         }
         PersistenceManager.removeKey(key.getCode());
         src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Key removed.", "Chave removida.")), true);
+        return 1;
+    }
+
+    private static int executeKeyCleanup(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        List<KeyRecord> allKeys = PersistenceManager.getAllKeys();
+        int removed = 0;
+        for (KeyRecord key : allKeys) {
+            if (key.getUsedCount() <= 0) {
+                PersistenceManager.removeKey(key.getCode());
+                removed++;
+            }
+        }
+        int finalRemoved = removed;
+        src.sendSuccess(() -> Component.literal("§a" + EasyVipConfig.localized("Cleanup complete. Removed ", "Limpeza concluída. Removidas ") + "§e" + finalRemoved + " §a" + EasyVipConfig.localized("unused key(s).", "chave(s) não utilizadas.")), true);
         return 1;
     }
 

@@ -294,6 +294,31 @@ class WebStoreFulfillmentServiceTest {
     }
 
     @Test
+    void repeatedEmptyPollsStillCallEndpointButLogOnce() throws Exception {
+        AtomicInteger claimCount = new AtomicInteger();
+        try (TestRailsServer rails = startRails(request -> {
+            if (request.path.endsWith("/claim")) {
+                claimCount.incrementAndGet();
+                return signedJson(204, "");
+            }
+            fail("Unexpected path: " + request.path);
+            return signedJson(500, "{\"error\":\"unexpected_path\"}");
+        })) {
+            startFulfillment(rails.baseUrl());
+            awaitCondition(() -> claimCount.get() == 1, Duration.ofSeconds(5));
+            WebStoreFulfillmentService.pollNowForTest();
+
+            Path logFile = tempDir.resolve("data/webstore_fulfillment.log");
+            long emptyLines = Files.readAllLines(logFile).stream()
+                    .filter(line -> line.contains("EMPTY |"))
+                    .count();
+            assertEquals(2, claimCount.get());
+            assertEquals(1, emptyLines);
+            assertNull(rails.failure());
+        }
+    }
+
+    @Test
     void responseSignatureValidationRejectsTampering() throws Exception {
         byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
         long timestamp = Instant.now().getEpochSecond();

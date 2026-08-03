@@ -1,9 +1,6 @@
-# v1.0.0
+# v1.1.0
 
-- Lançamento inicial do easyVip
-- Suporte a NeoForge 1.21.1
-- Suporte a Fabric 1.21.1
-- Sistema de VIP com tiers customizáveis
-- Ativação por chave
-- Pacotes de recompensas
-- Integração opcional com FTB Ranks e LuckPerms
+- Novo comando `/easyvip admin addfakevip` para VIPs offline
+- Comando `/easyvip key cleanup` para remover chaves expiradas
+- Mensagens específicas para chaves de recompensa (reward keys)
+- Melhorias na confirmação de ativação de chaves benefit/reward

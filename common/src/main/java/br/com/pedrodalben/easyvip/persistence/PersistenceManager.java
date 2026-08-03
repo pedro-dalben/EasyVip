@@ -78,6 +78,9 @@ public final class PersistenceManager {
     }
 
     public static void shutdown() {
+        if (dataDir == null && !sqlMode) {
+            return;
+        }
         if (sqlMode) {
             SqlDatabaseManager.shutdown();
             return;
