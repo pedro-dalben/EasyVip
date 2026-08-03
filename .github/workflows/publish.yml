@@ -40,9 +40,8 @@ jobs:
       - name: Publicar no CurseForge, Modrinth e GitHub
         uses: Kira-NT/mc-publish@v3
         with:
-          files: |
-            neoforge/build/libs/!(*-@(dev|sources|javadoc)).jar
-            fabric/build/libs/!(*-@(dev|sources|javadoc)).jar
+          files-primary: neoforge/build/libs/!(*-@(dev|sources|javadoc)).jar
+          files-secondary: fabric/build/libs/!(*-@(dev|sources|javadoc)).jar
 
           name: "${{ github.event.repository.name }} ${{ github.ref_name }}"
           version: "${{ github.ref_name }}"
@@ -69,4 +68,3 @@ jobs:
 
           retry-attempts: 3
           fail-mode: fail
-          dry-run: false
