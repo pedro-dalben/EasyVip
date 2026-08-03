@@ -66,10 +66,17 @@ jobs:
           retry-attempts: 3
           fail-mode: fail
 
+      - name: Renomear JAR Fabric
+        run: |
+          for f in fabric/build/libs/!(*-@(dev|sources|javadoc)).jar; do
+            cp "$f" "fabric/build/libs/$(basename "$f" .jar)-fabric.jar"
+          done
+        shell: bash
+
       - name: Publicar Fabric
         uses: Kira-NT/mc-publish@v3
         with:
-          files: fabric/build/libs/!(*-@(dev|sources|javadoc)).jar
+          files: fabric/build/libs/*-fabric.jar
 
           name: "${{ github.event.repository.name }} ${{ github.ref_name }}"
           version: "${{ github.ref_name }}"
@@ -88,6 +95,9 @@ jobs:
 
           curseforge-id: "1638114"
           curseforge-token: "${{ secrets.CURSEFORGE_TOKEN }}"
+
+          github-tag: "${{ github.ref_name }}"
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
 
           retry-attempts: 3
           fail-mode: skip
